@@ -54,8 +54,12 @@ class GPU(Base):
         "Process", order_by=Process.id, back_populates="gpu"
     )
 
+    slurm_job_id = sa.Column(sa.Integer)
+
     def __repr__(self):
-        return "<GPU(gpu_id={}, node={})>".format(self.id, self.node_name)
+        return "<GPU(gpu_id={}, node={}, job_id={})>".format(
+            self.id, self.node_name, self.slurm_job_id
+        )
 
 
 Node.gpus = sa.orm.relationship("GPU", order_by=GPU.id, back_populates="node")
