@@ -21,10 +21,10 @@ class Process(Base):
 
     id = sa.Column(sa.Integer, primary_key=True)
 
-    node = sa.orm.relationship("Node", back_populates="processes")
+    node = sa.orm.relationship("Node", back_populates="processes", lazy="joined")
     node_name = sa.Column(sa.String, sa.ForeignKey("nodes.name"), primary_key=True)
 
-    gpu = sa.orm.relationship("GPU", back_populates="processes")
+    gpu = sa.orm.relationship("GPU", back_populates="processes", lazy="joined")
     gpu_id = sa.Column(sa.Integer, sa.ForeignKey("gpus.id"))
 
     user = sa.Column(sa.String)
@@ -49,9 +49,9 @@ class GPU(Base):
     id = sa.Column(sa.Integer, primary_key=True)
     node_name = sa.Column(sa.String, sa.ForeignKey("nodes.name"), primary_key=True)
 
-    node = sa.orm.relationship("Node", back_populates="gpus")
+    node = sa.orm.relationship("Node", back_populates="gpus", lazy="joined")
     processes = sa.orm.relationship(
-        "Process", order_by=Process.id, back_populates="gpu"
+        "Process", order_by=Process.id, back_populates="gpu", lazy="joined"
     )
 
     slurm_job_id = sa.Column(sa.Integer)
@@ -62,9 +62,11 @@ class GPU(Base):
         )
 
 
-Node.gpus = sa.orm.relationship("GPU", order_by=GPU.id, back_populates="node")
+Node.gpus = sa.orm.relationship(
+    "GPU", order_by=GPU.id, back_populates="node", lazy="joined"
+)
 Node.processes = sa.orm.relationship(
-    "Process", order_by=Process.id, back_populates="node"
+    "Process", order_by=Process.id, back_populates="node", lazy="joined"
 )
 
 
