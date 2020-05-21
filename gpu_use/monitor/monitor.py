@@ -6,10 +6,8 @@ import subprocess
 import sys
 import xml.etree.ElementTree as etree
 
-from sqlalchemy.orm import sessionmaker
-
 from gpu_use.db.db_schema import GPU, Node, Process
-from gpu_use.db.engine import engine
+from gpu_use.db.session import SessionMaker
 
 
 def getLineage(pid):
@@ -58,23 +56,25 @@ def node_monitor():
 
     # Get process info including who is running it
     pid_list = ",".join([str(y) for y in pids])
-    ps_info = subprocess.check_output(
-        shlex.split(pid_command + pid_list), stderr=subprocess.STDOUT
-    ).decode("utf-8")
+    ps_info = (
+        subprocess.check_output(
+            shlex.split(pid_command + pid_list), stderr=subprocess.STDOUT
+        )
+        .decode("utf-8")
+        .strip()
+    )
 
-    for info_line in ps_info.readlines():
+    for info_line in ps_info.split("\n"):
         info = info_line.split(",:,")
         pid2user_info[int(info[0])] = info[1:]
 
     # Get jobid to pid mappings
-    slurm_pids = subprocess.check_output(shlex.split(listpids_command)).decode(
-        "utf-8"
+    slurm_pids = (
+        subprocess.check_output(shlex.split(listpids_command)).decode("utf-8").strip()
     )  # job -> pid mappings
-    for info_line in slurm_pids.readlines()[1:]:
+    for info_line in slurm_pids.split("\n")[1:]:
         info = info_line.split()
         pid2job_info[int(info[0])] = int(info[1])
-
-    session = sessionmaker(bind=engine)
 
     node = Node(name=hostname)
     node.load = "{} / {} / {}".format(*os.getloadavg())
@@ -100,15 +100,26 @@ def node_monitor():
 
             processes.append(
                 Process(
-                    id=pid, gpu=gpu, node=node, user=user, command=cmd, slurm_job_id=job
+                    id=pid,
+                    gpu=gpu,
+                    node=node,
+                    user=user,
+                    command=cmnd,
+                    slurm_job_id=job,
                 )
             )
 
+    session = SessionMaker()
     existing_node = session.query(Node).filter_by(name=hostname).first()
     if existing_node is not None:
+        for gpu in existing_node.gpus:
+            session.delete(gpu)
+        for proc in existing_node.processes:
+            session.delete(proc)
+
         session.delete(existing_node)
 
-    session.add_all([node] + [processes] + [gpus])
+    session.add_all([node] + processes + gpus)
     session.commit()
 
 
