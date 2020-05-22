@@ -32,11 +32,14 @@ def get_lineage(pid):
     ancestors = [pid]
     ppid = pid
     while not ppid == 1:
-        ppid = int(
-            subprocess.check_output(shlex.split(f"ps -p {ppid} -oppid="))
-            .decode("utf-8")
-            .strip()
-        )
+        try:
+            ppid = int(
+                subprocess.check_output(shlex.split(f"ps -p {ppid} -oppid="))
+                .decode("utf-8")
+                .strip()
+            )
+        except subprocess.CalledProcessError:
+            return None
         ancestors.append(ppid)
     return ancestors
 

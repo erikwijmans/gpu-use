@@ -215,9 +215,26 @@ def _show_non_dense(nodes, user: re.Pattern, only_errors):
     show_default=True,
     help="Specify a specific user -- regex enabled",
 )
-@click.option("-d", "--dense", default=False, is_flag=True)
-@click.option("-e", "--error", "only_errors", default=False, is_flag=True)
-@click.option("-t", "--display-time", "display_time", default=False, is_flag=True)
+@click.option(
+    "-d", "--dense", help="Use dense output format", default=False, is_flag=True
+)
+@click.option(
+    "-e",
+    "--error",
+    "only_errors",
+    help="Only display errors",
+    default=False,
+    is_flag=True,
+)
+@click.option(
+    "-t",
+    "--display-time",
+    "display_time",
+    help="Display the current time."
+    + "  Nice for watch loop to see that things are still updating",
+    default=False,
+    is_flag=True,
+)
 def gpu_use_cli(node, user, dense, only_errors, display_time):
     if display_time:
         now = datetime.datetime.now()
