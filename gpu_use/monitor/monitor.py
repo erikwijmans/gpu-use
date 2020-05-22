@@ -186,9 +186,6 @@ def node_monitor():
                 job_id=jid, node=node, user=user, is_debug_job=_is_debug_job(jid)
             )
 
-            if gpu.slurm_job is not None:
-                session.delete(gpu.slurm_job)
-
             session.add(job)
             existing_jobs[jid] = job
 
@@ -244,5 +241,15 @@ def node_monitor():
         .all()
     ):
         session.delete(proc)
+
+    for job in (
+        session.query(SLURMJob)
+        .filter(
+            (SLURMJob.node_name == hostname)
+            & sa.not_(SLURMJob.job_id.in_(list(pid2job_info.values())))
+        )
+        .all()
+    ):
+        session.delete(job)
 
     session.commit()
