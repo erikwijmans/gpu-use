@@ -16,6 +16,20 @@ class Node(Base):
         return "<Node(name={}, load={})>".format(self.name, self.load)
 
 
+class SLURMJob(Base):
+    __tablename__ = "slurm_jobs"
+
+    job_id = sa.Column(sa.String, primary_key=True)
+
+    node = sa.orm.relationship("Node", back_populates="slurm_jobs", lazy="joined")
+    node_name = sa.Column(sa.String, sa.ForeignKey("nodes.name"))
+
+    user = sa.Column(sa.String)
+
+    def __repr__(self):
+        return "<SLURMJob<(job_id={}, user={})>".format(self.job_id, self.user)
+
+
 class Process(Base):
     __tablename__ = "processes"
 
@@ -27,19 +41,17 @@ class Process(Base):
     gpu = sa.orm.relationship("GPU", back_populates="processes", lazy="joined")
     gpu_id = sa.Column(sa.Integer, sa.ForeignKey("gpus.id"))
 
-    user = sa.Column(sa.String)
+    slurm_job = sa.orm.relationship(
+        "SLURMJob", back_populates="processes", lazy="joined"
+    )
+    slurm_job_id = sa.Column(sa.String, sa.ForeignKey("slurm_jobs.job_id"))
 
-    slurm_job_id = sa.Column(sa.Integer)
+    user = sa.Column(sa.String)
     command = sa.Column(sa.String)
 
     def __repr__(self):
-        return "<Process(pid={}, node={}, gpu={}, job_id={}, user={}, command={})>".format(
-            self.id,
-            self.node_name,
-            self.gpu_id,
-            self.slurm_job_id,
-            self.user,
-            self.command,
+        return "<Process(pid={}, node={}, gpu={}, user={}, command={})>".format(
+            self.id, self.node_name, self.gpu_id, self.user, self.command
         )
 
 
@@ -54,14 +66,24 @@ class GPU(Base):
         "Process", order_by=Process.id, back_populates="gpu", lazy="joined"
     )
 
-    slurm_job_id = sa.Column(sa.Integer)
+    slurm_job = sa.orm.relationship("SLURMJob", back_populates="gpus", lazy="joined")
+    slurm_job_id = sa.Column(sa.String, sa.ForeignKey("slurm_jobs.job_id"))
+    slurm_job_user = sa.Column(sa.String, sa.ForeignKey("slurm_jobs.user"))
 
     def __repr__(self):
-        return "<GPU(gpu_id={}, node={}, job_id={})>".format(
-            self.id, self.node_name, self.slurm_job_id
-        )
+        return "<GPU(gpu_id={}, node={})>".format(self.id, self.node_name)
 
 
+SLURMJob.gpus = sa.orm.relation(
+    "GPU", order_by=GPU.id, back_populates="slurm_job", lazy="joined"
+)
+SLURMJob.processes = sa.orm.relation(
+    "Process", order_by=Process.id, back_populates="slurm_job", lazy="joined"
+)
+
+Node.slurm_jobs = sa.orm.relationship(
+    "SLURMJob", order_by=SLURMJob.job_id, back_populates="node", lazy="joined"
+)
 Node.gpus = sa.orm.relationship(
     "GPU", order_by=GPU.id, back_populates="node", lazy="joined"
 )
