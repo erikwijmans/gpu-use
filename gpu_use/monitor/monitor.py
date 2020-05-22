@@ -7,11 +7,28 @@ import subprocess
 import sys
 import xml.etree.ElementTree as etree
 
-from gpu_use.db.db_schema import GPU, Node, Process, SLURMJob
+import sqlalchemy as sa
+
+from gpu_use.db.db_schema import GPU, GPUProcess, Node, SLURMJob
 from gpu_use.db.session import SessionMaker
 
+DEBUG_CHECK = "scontrol show job {} 2>/dev/null | grep \"Partition\" | awk -F'[ =]+' '{{print $3 == \"debug\"}}'"
 
-def getLineage(pid):
+
+def _is_debug_job(jid):
+    try:
+        return bool(
+            int(
+                subprocess.check_output(DEBUG_CHECK.format(jid), shell=True).decode(
+                    "utf-8"
+                )
+            )
+        )
+    except ValueError:
+        return False
+
+
+def get_lineage(pid):
     ancestors = [pid]
     ppid = pid
     while not ppid == 1:
@@ -28,7 +45,29 @@ gpu_command = "nvidia-smi -q -x"
 pid_command = "ps -o %p,:,%u,:,%t,:,%a,:,%P --no-header -p "
 listpids_command = "scontrol listpids"
 environ_file = "/proc/{}/environ"
-print_environ_file_command = "xargs --null --max-args=1 echo < {}"
+print_environ_file_command = "cat {} | xargs --null --max-args=1 echo"
+
+
+def is_gpu_state_same_and_all_sched(gpu2pid_info):
+    hostname = os.uname()[1]
+    session = SessionMaker()
+
+    gpus = session.query(GPU).filter_by(node_name=hostname).order_by(GPU.id).all()
+    for gpu_id in sorted(gpu2pid_info.keys()):
+        if gpu_id >= len(gpus):
+            return False
+
+        gpu = gpus[gpu_id]
+        known_pids = {proc.id for proc in gpu.processes}
+        new_pids = set(gpu2pid_info[gpu_id])
+
+        if known_pids != new_pids:
+            return False
+
+        if len(known_pids) == 0:
+            return False
+
+    return True
 
 
 def node_monitor():
@@ -54,11 +93,21 @@ def node_monitor():
         ]
         pids.extend(gpu2pid_info[gpu_id])
 
+    if is_gpu_state_same_and_all_sched(gpu2pid_info):
+        return
+
     # Get jobid to pid mappings
-    slurm_pids = (
-        subprocess.check_output(shlex.split(listpids_command)).decode("utf-8").strip()
-    )  # job -> pid mappings
-    slurm_pids = [info.split() for info in slurm_pids.split("\n")[1:]]
+    try:
+        slurm_pids = (
+            subprocess.check_output(shlex.split(listpids_command))
+            .decode("utf-8")
+            .strip()
+            .split("\n")[1:]
+        )  # job -> pid mappings
+    except subprocess.CalledProcessError:
+        slurm_pids = []
+
+    slurm_pids = [info.split() for info in slurm_pids]
     slurm_pids = [dict(pid=int(info[0]), jid=int(info[1])) for info in slurm_pids]
     slurm_pids = list(
         filter(lambda info: osp.exists(environ_file.format(info["pid"])), slurm_pids)
@@ -68,15 +117,19 @@ def node_monitor():
     pid_list = ",".join(
         [str(y) for y in pids] + [str(info["pid"]) for info in slurm_pids]
     )
-    ps_info = (
-        subprocess.check_output(
-            shlex.split(pid_command + pid_list), stderr=subprocess.STDOUT
+    if len(pid_list) > 0:
+        ps_info = (
+            subprocess.check_output(
+                shlex.split(pid_command + pid_list), stderr=subprocess.STDOUT
+            )
+            .decode("utf-8")
+            .strip()
+            .split("\n")
         )
-        .decode("utf-8")
-        .strip()
-    )
+    else:
+        ps_info = []
 
-    for info_line in ps_info.split("\n"):
+    for info_line in ps_info:
         info = info_line.split(",:,")
         pid2user_info[int(info[0])] = info[1:]
 
@@ -89,9 +142,8 @@ def node_monitor():
         if osp.exists(environ_file.format(pid)):
             p_environ = (
                 subprocess.check_output(
-                    shlex.split(
-                        print_environ_file_command.format(environ_file.format_map(pid))
-                    )
+                    print_environ_file_command.format(environ_file.format(pid)),
+                    shell=True,
                 )
                 .decode("utf-8")
                 .split("\n")
@@ -106,72 +158,91 @@ def node_monitor():
             if cuda_devices == "NoDevFiles":
                 continue
 
-            cuda_devices = cuda_devices[0].split(",")
+            cuda_devices = cuda_devices.split(",")
             for gpu_id in cuda_devices:
                 gpu_id = int(gpu_id)
-                gpu2job_info[gpu_id] = dict(jid=jid, user=pid2user_info[pid][0])
+                gpu2job_info[gpu_id] = dict(
+                    jid=jid, user=pid2user_info[pid][0].strip()[0:32]
+                )
 
-    node = Node(name=hostname)
-    node.load = "{} / {} / {}".format(*os.getloadavg())
+    session = SessionMaker()
+    node = session.query(Node).filter_by(name=hostname).first()
+    if node is None:
+        node = Node(name=hostname)
+        session.add(node)
 
-    processes = []
-    gpus = []
-    jobs = []
+    node.load = "{:.2f} / {:.2f} / {:.2f}".format(*os.getloadavg())
+
+    existing_processes = {
+        (proc.id, proc.node_name, proc.gpu_id)
+        for gpu in node.gpus
+        for proc in gpu.processes
+    }
+    existing_jobs = {job.job_id: job for job in node.slurm_jobs}
+
+    def _add_job(gpu, jid, user):
+        if jid not in existing_jobs:
+            job = SLURMJob(
+                job_id=jid, node=node, user=user, is_debug_job=_is_debug_job(jid)
+            )
+
+            if gpu.slurm_job is not None:
+                session.delete(gpu.slurm_job)
+
+            session.add(job)
+            existing_jobs[jid] = job
+
+        gpu.slurm_job = existing_jobs[jid]
+        return existing_jobs[jid]
+
+    new_processes = []
+    all_pids = set()
 
     for gpu_id in sorted(gpu2pid_info.keys()):
-        gpu = GPU(id=gpu_id, node=node)
-        gpus.append(gpu)
+        if gpu_id >= len(node.gpus):
+            gpu = GPU(id=gpu_id, node=node)
+            session.add(gpu)
+        else:
+            gpu = node.gpus[gpu_id]
 
         if gpu_id in gpu2job_info:
-            job = SLURMJob(
-                job_id=gpu2job_info[gpu_id]["jid"],
-                node=node,
-                user=gpu2job_info[gpu_id]["user"],
-            )
-            jobs.append(job)
-            gpu.slurm_job = job
+            job_info = gpu2job_info[gpu_id]
+            _add_job(gpu, job_info["jid"], job_info["user"])
 
         for pid in gpu2pid_info[gpu_id]:
-            ancestors = getLineage(pid)
+            all_pids.add(pid)
+
+            if (pid, hostname, gpu_id) in existing_processes:
+                continue
+
+            ancestors = get_lineage(pid)
             job_ids = list(
                 set([pid2job_info[i] for i in ancestors if i in pid2job_info.keys()])
             )
 
+            user = pid2user_info[pid][0].strip()[0:32]
+
             if len(job_ids) >= 1:
-                slurm_job = gpu.slurm_job
+                slurm_job = _add_job(gpu, job_ids[0], user)
             else:
                 slurm_job = None
 
-            user = pid2user_info[pid][0]
-            cmnd = pid2user_info[pid][2][:75]
+            cmnd = pid2user_info[pid][2][0:128]
 
-            processes.append(
-                Process(
-                    id=pid,
-                    gpu=gpu,
-                    node=node,
-                    user=user,
-                    command=cmnd,
-                    slurm_job=slurm_job,
+            new_processes.append(
+                GPUProcess(
+                    id=pid, gpu=gpu, user=user, command=cmnd, slurm_job=slurm_job
                 )
             )
 
-    session = SessionMaker()
-    existing_node = session.query(Node).filter_by(name=hostname).first()
-    if existing_node is not None:
-        for gpu in existing_node.gpus:
-            session.delete(gpu)
-        for proc in existing_node.processes:
-            session.delete(proc)
-        for slurm_job in existing_node.slurm_jobs:
-            session.delete(slurm_job)
+    session.add_all(new_processes)
+    for proc in (
+        session.query(GPUProcess)
+        .filter(
+            (GPUProcess.node_name == hostname) & sa.not_(GPUProcess.id.in_(all_pids))
+        )
+        .all()
+    ):
+        session.delete(proc)
 
-        session.delete(existing_node)
-
-    session.add_all([node] + processes + gpus + jobs)
     session.commit()
-
-
-if __name__ == "__main__":
-    node_monitor()
-    node_monitor()

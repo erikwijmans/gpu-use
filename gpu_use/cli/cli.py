@@ -1,32 +1,16 @@
 import argparse
+import datetime
 import os
 import platform
 import re
 import shlex
 import subprocess
 import sys
-from time import gmtime, strftime
 
 import click
 
-from gpu_use.db.db_schema import GPU, Node, Process
+from gpu_use.db.db_schema import GPU, GPUProcess, Node, SLURMJob
 from gpu_use.db.session import SessionMaker
-from gpu_use.monitor import node_monitor
-
-DEBUG_CHECK = "scontrol show job {} 2>/dev/null | grep \"Partition\" | awk -F'[ =]+' '{{print $3 == \"debug\"}}'"
-
-
-def _is_debug_job(jid):
-    try:
-        return bool(
-            int(
-                subprocess.check_output(
-                    DEBUG_CHECK.format(gpu.slurm_job.job_id)
-                ).decode("utf-8")
-            )
-        )
-    except ValueError:
-        return False
 
 
 def _is_valid_use(gpu: GPU):
@@ -41,15 +25,18 @@ def _show_dense(nodes, user: re.Pattern, only_errors):
                     "-------------------------------------------------------------------\n"
                     + node.name
                     + "\n-------------------------------------------------------------------",
-                    fg="white",
+                    fg="bright_white",
                     bold=True,
                 )
             )
 
         for gpu in node.gpus:
-            if not (
+            if user is not None and not (
                 any(user.match(proc.user) for proc in gpu.processes)
-                or user.match(gpu.slurm_job_user) is not None
+                or (
+                    gpu.slurm_job is not None
+                    and user.match(gpu.slurm_job.user) is not None
+                )
             ):
                 continue
 
@@ -65,17 +52,17 @@ def _show_dense(nodes, user: re.Pattern, only_errors):
             if len(gpu.processes) > 0:
                 in_use = True
 
-            res_char = u"\u25A1".encode("utf_8")
-            use_char = u"\u25A1".encode("utf_8")
+            res_char = u"\u25A1"
+            use_char = u"\u25A1"
             res_record = "-"
-            color = "white"
+            color = "bright_white"
 
             if reserved:
-                res_char = u"\u25A0".encode("utf_8")
-                res_record = "{} ({})".format(gpu.user, gpu.slurm_job.job_id)
+                res_char = u"\u25A0"
+                res_record = "{} ({})".format(gpu.slurm_job.user, gpu.slurm_job.job_id)
 
             if in_use:
-                use_char = u"\u25A0".encode("utf_8")
+                use_char = u"\u25A0"
 
             if reserved and in_use and not valid_use:
                 color = "red"
@@ -86,7 +73,7 @@ def _show_dense(nodes, user: re.Pattern, only_errors):
                 color = "red"
                 err_msg = "[Idle reservation]"
                 error = True
-                if _is_debug_job(gpu.slurm_job_id):
+                if gpu.slurm_job.is_debug_job:
                     err_msg = "[Idle reservation - DEBUG]"
                     color = "magenta"
 
@@ -96,28 +83,37 @@ def _show_dense(nodes, user: re.Pattern, only_errors):
                 error = True
 
             if not only_errors or (only_errors and error):
+                gpu_record = "{}{}[{}]".format(res_char, use_char, gpu.id)
                 if only_errors:
                     click.echo(
                         click.style(
-                            str((node, gpu_record, res_record, err_msg)), fg=color
-                        )
+                            "{} {} {} {}".format(node, gpu_record, res_record, err_msg),
+                            fg=color,
+                        ),
+                        nl=False,
                     )
                 else:
                     click.echo(
-                        click.style(str((gpu_record, res_record, err_msg)), fg=color)
+                        click.style(
+                            "{} {} {}".format(gpu_record, res_record, err_msg), fg=color
+                        ),
+                        nl=False,
                     )
 
                 for proc in gpu.processes:
-                    color = "white"
+                    color = "bright_white"
                     error = False
                     err_msg = ""
 
-                    if proc.slurm_job is not None:
+                    if (
+                        proc.slurm_job is not None
+                        and proc.slurm_job_id != gpu.slurm_job_id
+                    ):
                         color = "red"
-                        err_msg = "[Wrong Job (" + str(proc["jid"]) + ")]"
+                        err_msg = "[Wrong Job (" + str(proc.slurm_job_id) + ")]"
                         error = True
 
-                    else:
+                    if proc.slurm_job is None:
                         color = "red"
                         err_msg = "[No Job]"
                         error = True
@@ -130,11 +126,12 @@ def _show_dense(nodes, user: re.Pattern, only_errors):
                                     proc.id, proc.command, proc.user, err_msg
                                 ),
                                 fg=color,
-                            )
+                            ),
+                            nl=False,
                         )
 
         if not only_errors:
-            click.echo("\n")
+            click.echo("")
 
 
 def _show_non_dense(nodes, user: re.Pattern, only_errors):
@@ -142,12 +139,15 @@ def _show_non_dense(nodes, user: re.Pattern, only_errors):
         gpu_tot = 0
         gpu_res = 0
         gpu_used = 0
-        click.echo(click.style(node.name, fg="white", bold=True))
+        click.echo(click.style(node.name, fg="bright_white", bold=True))
 
         for gpu in node.gpus:
-            if not (
+            if user is not None and not (
                 any(user.match(proc.user) for proc in gpu.processes)
-                or user.match(gpu.slurm_job_user) is not None
+                or (
+                    gpu.slurm_job is not None
+                    and user.match(gpu.slurm_job.user) is not None
+                )
             ):
                 continue
 
@@ -168,31 +168,33 @@ def _show_non_dense(nodes, user: re.Pattern, only_errors):
 
             valid_use = _is_valid_use(gpu)
 
-            res_char = u"\u25A1".encode("utf_8")
-            use_char = u"\u25A1".encode("utf_8")
-            color = "white"
+            res_char = u"\u25A1"
+            use_char = u"\u25A1"
+            color = "bright_white"
 
             if reserved:
-                res_char = u"\u25A0".encode("utf_8")
+                res_char = u"\u25A0"
 
             if in_use:
-                use_char = u"\u25A0".encode("utf_8")
+                use_char = u"\u25A0"
 
             if reserved and in_use and not valid_use:
                 color = "red"
 
             if reserved and not in_use:
                 color = "red"
-                if _is_debug_job(gpu.slurm_job_id):
+                if gpu.slurm_job.is_debug_job:
                     color = "magenta"
 
             if in_use and not reserved:
                 color = "red"
 
             click.echo(
-                click.style("\t{}{}[{}]".format(res_char, use_char, gpu.id), fg=color)
+                click.style("\t{}{}[{}]".format(res_char, use_char, gpu.id), fg=color),
+                nl=False,
             )
 
+        click.echo("")
         click.echo("\t{} / {} / {}".format(gpu_used, gpu_res, gpu_tot))
 
 
@@ -201,7 +203,7 @@ def _show_non_dense(nodes, user: re.Pattern, only_errors):
     "-n",
     "--node",
     type=str,
-    default=".*",
+    default=None,
     show_default=True,
     help="Specify a specific node -- regex enabled",
 )
@@ -209,40 +211,70 @@ def _show_non_dense(nodes, user: re.Pattern, only_errors):
     "-u",
     "--user",
     type=str,
-    default=".*",
+    default=None,
     show_default=True,
     help="Specify a specific user -- regex enabled",
 )
 @click.option("-d", "--dense", default=False, is_flag=True)
 @click.option("-e", "--error", "only_errors", default=False, is_flag=True)
-def gpu_use_cli(node, user, dense, only_errors):
-    node = re.compile(node)
-    user = re.compile(user)
+@click.option("-t", "--display-time", "display_time", default=False, is_flag=True)
+def gpu_use_cli(node, user, dense, only_errors, display_time):
+    if display_time:
+        now = datetime.datetime.now()
+        click.secho(now.strftime("%Y-%m-%d %H:%M:%S"), fg="green")
+        click.echo()
+
+    node_re = re.compile(node) if node is not None else None
+    user_re = re.compile(user) if user is not None else None
 
     session = SessionMaker()
 
-    node_names = [
-        name for name in session.query(Node.name).all() if node.match(name) is not None
-    ]
-    user_names = [
-        name
-        for name in session.query(Process.user).distinct().all()
-        if user.match(name) is not None
-    ]
-    nodes = (
-        session.query(Node)
-        .filter(
-            Node.name.in_(node_names) & Node.processes.has(Process.user.in_(user_names))
-        )
-        .all()
-    )
+    nodes = session.query(Node)
+    if node_re is not None or user_re is not None:
+        node_filter = None
+        if node_re is not None:
+            node_names = [
+                name[0]
+                for name in session.query(Node.name).all()
+                if node_re.match(name[0]) is not None
+            ]
+            if len(node_names) == 0:
+                raise click.BadArgumentUsage("No nodes matched {}".format(node))
+
+            node_filter = Node.name.in_(node_names)
+
+        if user_re is not None:
+            user_names = [
+                name[0]
+                for name in session.query(GPUProcess.user).distinct().all()
+                if user_re.match(name[0]) is not None
+            ] + [
+                name[0]
+                for name in session.query(SLURMJob.user).distinct().all()
+                if user_re.match(name[0]) is not None
+            ]
+
+            if len(user_names) == 0:
+                raise click.BadArgumentUsage("No users matched {}".format(user))
+
+            user_filter = Node.gpus.any(
+                GPU.processes.any(GPUProcess.user.in_(user_names))
+            ) | Node.slurm_jobs.any(SLURMJob.user.in_(user_names))
+
+            if node_filter is None:
+                node_filter = user_filter
+            else:
+                node_filter = node_filter & user_filter
+
+        nodes = nodes.filter(node_filter)
+
+    nodes = nodes.order_by(Node.name).all()
 
     if dense:
-        _show_dense(nodes, user, only_errors)
+        _show_non_dense(nodes, user_re, only_errors)
     else:
-        _show_non_dense(nodes, user, only_errors)
+        _show_dense(nodes, user_re, only_errors)
 
 
 if __name__ == "__main__":
-    node_monitor()
     gpu_use_cli()
