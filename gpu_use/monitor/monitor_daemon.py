@@ -31,8 +31,7 @@ class MonitorDaemon:
     stderr_path = "/var/log/gpu-used/gpu-used.log"
 
     def __init__(self):
-        pass
-        #  os.makedirs(os.path.dirname(self.stdout_path), exist_ok=True)
+        os.makedirs(os.path.dirname(self.stdout_path), exist_ok=True)
 
     def run(self):
         while True:
