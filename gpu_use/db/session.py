@@ -1,7 +1,5 @@
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
-from gpu_use.db.engine import make_engine
+from gpu_use.db.engine import engine
 
-
-def SessionMaker() -> Session:
-    return Session(bind=make_engine())
+SessionMaker = sessionmaker(bind=engine)

@@ -3,8 +3,6 @@ import time
 
 from daemon.runner import DaemonRunner
 
-from gpu_use.monitor.monitor import node_monitor
-
 
 class DaemonRunnerPy3(DaemonRunner):
     def _open_streams_from_app_stream_paths(self, app):
@@ -34,9 +32,11 @@ class MonitorDaemon:
         os.makedirs(os.path.dirname(self.stdout_path), exist_ok=True)
 
     def run(self):
+        from gpu_use.monitor.monitor import node_monitor
+
         while True:
             node_monitor()
-            time.sleep(30)
+            time.sleep(60)
 
 
 def run_daemon():

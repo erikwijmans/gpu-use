@@ -214,11 +214,11 @@ def node_monitor():
             _add_job(gpu, job_info["jid"], job_info["user"])
 
         for pid in gpu2pid_info[gpu_id]:
+            all_pids.add(pid)
+
             ancestors = get_lineage(pid)
             if ancestors is None:
                 continue
-
-            all_pids.add(pid)
 
             if (pid, hostname, gpu_id) in existing_processes:
                 proc = existing_processes[(pid, hostname, gpu_id)]

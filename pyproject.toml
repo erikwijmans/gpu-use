@@ -5,8 +5,8 @@ description = ""
 authors = ["Erik Wijmans <etw@gatech.edu>"]
 
 [tool.poetry.scripts]
-gpu-used = 'gpu_use:run_daemon'
-gpu-use = 'gpu_use:gpu_use_cli'
+gpu-used = 'gpu_use:monitor_daemon.run_daemon'
+gpu-use = 'gpu_use:cli.gpu_use_cli'
 
 [tool.poetry.dependencies]
 python = ">=3.6.1"

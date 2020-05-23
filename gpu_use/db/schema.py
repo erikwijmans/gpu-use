@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 from sqlalchemy.ext.declarative import declarative_base
 
-from gpu_use.db.engine import make_engine
+from gpu_use.db.engine import engine
 
 Base = declarative_base()
 
@@ -93,4 +93,4 @@ Node.gpus = sa.orm.relationship(
 )
 
 
-Base.metadata.create_all(make_engine())
+Base.metadata.create_all(engine)
