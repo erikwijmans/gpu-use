@@ -256,7 +256,8 @@ def _show_dense(nodes: List[Node], user_names: Set[str], display_time, display_l
     "-e",
     "--error",
     "only_errors",
-    help="Only display errors. Cannot be used with --dense",
+    help="Display only errors and full information about errors."
+    " Cannot be used with --dense",
     default=False,
     is_flag=True,
 )
@@ -279,6 +280,11 @@ def _show_dense(nodes: List[Node], user_names: Set[str], display_time, display_l
 )
 def gpu_use_cli(node, user, dense, only_errors, display_time, display_load):
     r"""Display real-time information about the GPUs on skynet
+
+There are two blocks per GPU, the left block indicates whether or not the GPU is
+alloced and the right block indicates whether or not something is running on it.
+Red means there is some error (idle reservation or process running out of SLURM)
+and pink/magenta means idle reservation but in the debug partition.
 
 
 Notes:
