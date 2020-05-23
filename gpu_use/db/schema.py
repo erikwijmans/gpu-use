@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 from sqlalchemy.ext.declarative import declarative_base
 
-from gpu_use.db.engine import engine
+from gpu_use.db.engine import make_engine
 
 Base = declarative_base()
 
@@ -11,6 +11,7 @@ class Node(Base):
 
     name = sa.Column(sa.String(32), primary_key=True)
     load = sa.Column(sa.String(64))
+    update_time = sa.Column(sa.DateTime())
 
     def __repr__(self):
         return "<Node(name={}, load={})>".format(self.name, self.load)
@@ -92,4 +93,4 @@ Node.gpus = sa.orm.relationship(
 )
 
 
-Base.metadata.create_all(engine)
+Base.metadata.create_all(make_engine())

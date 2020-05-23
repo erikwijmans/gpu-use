@@ -5,7 +5,7 @@ description = ""
 authors = ["Erik Wijmans <etw@gatech.edu>"]
 
 [tool.poetry.scripts]
-gpu-use-node-monintor = 'gpu_use:node_monintor'
+gpu-used = 'gpu_use:run_daemon'
 gpu-use = 'gpu_use:gpu_use_cli'
 
 [tool.poetry.dependencies]
@@ -14,6 +14,7 @@ sqlalchemy = "^1.3.17"
 click = "^7.1.2"
 colorama = "^0.4.3"
 mysqlclient = "^1.4.6"
+python-daemon = "^2.2.4"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"

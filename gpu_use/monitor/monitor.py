@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import datetime
 import os
 import os.path as osp
 import shlex
@@ -9,7 +10,7 @@ import xml.etree.ElementTree as etree
 
 import sqlalchemy as sa
 
-from gpu_use.db.db_schema import GPU, GPUProcess, Node, SLURMJob
+from gpu_use.db.schema import GPU, GPUProcess, Node, SLURMJob
 from gpu_use.db.session import SessionMaker
 
 DEBUG_CHECK = "scontrol show job {} 2>/dev/null | grep \"Partition\" | awk -F'[ =]+' '{{print $3 == \"debug\"}}'"
@@ -40,6 +41,7 @@ def get_lineage(pid):
             )
         except subprocess.CalledProcessError:
             return None
+
         ancestors.append(ppid)
     return ancestors
 
@@ -51,7 +53,7 @@ environ_file = "/proc/{}/environ"
 print_environ_file_command = "cat {} | xargs --null --max-args=1 echo"
 
 
-def is_gpu_state_same_and_all_sched(gpu2pid_info):
+def is_gpu_state_same_and_all_in_use(gpu2pid_info):
     hostname = os.uname()[1]
     session = SessionMaker()
 
@@ -74,11 +76,21 @@ def is_gpu_state_same_and_all_sched(gpu2pid_info):
 
 
 def node_monitor():
-    # Init container variables
-    gpu_info = {}
-
     # Collect information about system health overall
     hostname = os.uname()[1]
+
+    session = SessionMaker()
+    node = session.query(Node).filter_by(name=hostname).first()
+    if node is None:
+        node = Node(name=hostname)
+        session.add(node)
+
+    node.load = "{:.2f} / {:.2f} / {:.2f}".format(*os.getloadavg())
+    node.update_time = datetime.datetime.now()
+    session.commit()
+
+    # Init container variables
+    gpu_info = {}
 
     # Process info containers
     gpu2pid_info = {}
@@ -96,7 +108,7 @@ def node_monitor():
         ]
         pids.extend(gpu2pid_info[gpu_id])
 
-    if is_gpu_state_same_and_all_sched(gpu2pid_info):
+    if is_gpu_state_same_and_all_in_use(gpu2pid_info):
         return
 
     # Get jobid to pid mappings
@@ -168,16 +180,8 @@ def node_monitor():
                     jid=jid, user=pid2user_info[pid][0].strip()[0:32]
                 )
 
-    session = SessionMaker()
-    node = session.query(Node).filter_by(name=hostname).first()
-    if node is None:
-        node = Node(name=hostname)
-        session.add(node)
-
-    node.load = "{:.2f} / {:.2f} / {:.2f}".format(*os.getloadavg())
-
     existing_processes = {
-        (proc.id, proc.node_name, proc.gpu_id)
+        (proc.id, proc.node_name, proc.gpu_id): proc
         for gpu in node.gpus
         for proc in gpu.processes
     }
@@ -210,12 +214,18 @@ def node_monitor():
             _add_job(gpu, job_info["jid"], job_info["user"])
 
         for pid in gpu2pid_info[gpu_id]:
+            ancestors = get_lineage(pid)
+            if ancestors is None:
+                continue
+
             all_pids.add(pid)
 
             if (pid, hostname, gpu_id) in existing_processes:
-                continue
+                proc = existing_processes[(pid, hostname, gpu_id)]
+            else:
+                proc = GPUProcess(id=pid, gpu=gpu)
+                new_processes.append(proc)
 
-            ancestors = get_lineage(pid)
             job_ids = list(
                 set([pid2job_info[i] for i in ancestors if i in pid2job_info.keys()])
             )
@@ -229,11 +239,9 @@ def node_monitor():
 
             cmnd = pid2user_info[pid][2][0:128]
 
-            new_processes.append(
-                GPUProcess(
-                    id=pid, gpu=gpu, user=user, command=cmnd, slurm_job=slurm_job
-                )
-            )
+            proc.user = user
+            proc.command = cmnd
+            proc.slurm_job = slurm_job
 
     session.add_all(new_processes)
     for proc in (
@@ -249,7 +257,7 @@ def node_monitor():
         session.query(SLURMJob)
         .filter(
             (SLURMJob.node_name == hostname)
-            & sa.not_(SLURMJob.job_id.in_(list(pid2job_info.values())))
+            & sa.not_(SLURMJob.job_id.in_(list(set(pid2job_info.values()))))
         )
         .all()
     ):

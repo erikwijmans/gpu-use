@@ -6,10 +6,11 @@ import re
 import shlex
 import subprocess
 import sys
+from typing import List
 
 import click
 
-from gpu_use.db.db_schema import GPU, GPUProcess, Node, SLURMJob
+from gpu_use.db.schema import GPU, GPUProcess, Node, SLURMJob
 from gpu_use.db.session import SessionMaker
 
 
@@ -17,17 +18,23 @@ def _is_valid_use(gpu: GPU):
     return all(proc.slurm_job is not None for proc in gpu.processes)
 
 
-def _show_dense(nodes, user: re.Pattern, only_errors):
+NODE_NAME_WITH_TIME = "{} -- Updated: {}"
+
+
+def _show_non_dense(nodes: List[Node], user: re.Pattern, only_errors, display_time):
     for node in nodes:
         if not only_errors:
-            click.echo(
-                click.style(
-                    "-------------------------------------------------------------------\n"
-                    + node.name
-                    + "\n-------------------------------------------------------------------",
-                    fg="bright_white",
-                    bold=True,
+            name_str = click.style(node.name, bold=True)
+            if display_time:
+                name_str = NODE_NAME_WITH_TIME.format(
+                    name_str, node.update_time.strftime("%Y-%m-%d %H:%M:%S")
                 )
+
+            click.secho(
+                "-------------------------------------------------------------------\n"
+                + name_str
+                + "\n-------------------------------------------------------------------",
+                fg="bright_white",
             )
 
         for gpu in node.gpus:
@@ -134,12 +141,17 @@ def _show_dense(nodes, user: re.Pattern, only_errors):
             click.echo("")
 
 
-def _show_non_dense(nodes, user: re.Pattern, only_errors):
+def _show_dense(nodes, user: re.Pattern, only_errors, display_time):
     for node in nodes:
         gpu_tot = 0
         gpu_res = 0
         gpu_used = 0
-        click.echo(click.style(node.name, fg="bright_white", bold=True))
+        name_str = click.style(node.name, bold=True)
+        if display_time:
+            name_str = NODE_NAME_WITH_TIME.format(
+                name_str, node.update_time.strftime("%Y-%m-%d %H:%M:%S")
+            )
+        click.secho(name_str, fg="bright_white")
 
         for gpu in node.gpus:
             if user is not None and not (
@@ -236,11 +248,6 @@ def _show_non_dense(nodes, user: re.Pattern, only_errors):
     is_flag=True,
 )
 def gpu_use_cli(node, user, dense, only_errors, display_time):
-    if display_time:
-        now = datetime.datetime.now()
-        click.secho(now.strftime("%Y-%m-%d %H:%M:%S"), fg="green")
-        click.echo()
-
     node_re = re.compile(node) if node is not None else None
     user_re = re.compile(user) if user is not None else None
 
@@ -288,9 +295,9 @@ def gpu_use_cli(node, user, dense, only_errors, display_time):
     nodes = nodes.order_by(Node.name).all()
 
     if dense:
-        _show_non_dense(nodes, user_re, only_errors)
+        _show_dense(nodes, user_re, only_errors, display_time)
     else:
-        _show_dense(nodes, user_re, only_errors)
+        _show_non_dense(nodes, user_re, only_errors, display_time)
 
 
 if __name__ == "__main__":
