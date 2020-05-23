@@ -281,9 +281,9 @@ def gpu_use_cli(node, user, dense, only_errors, display_time, display_load):
     r"""Display real-time information about the GPUs on skynet
 
 
-    Notes:
+Notes:
 
-        - When using gpu-use with `watch`, add `--color` for the output to be displayed
+    - When using gpu-use with `watch`, add `--color` for the output to be displayed
 correctly, i.e. use `watch --color gpu-use -d`.
     """
     if only_errors and dense:
