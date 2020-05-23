@@ -47,6 +47,7 @@ def _show_non_dense(
                 + name_str
                 + "\n-------------------------------------------------------------------",
                 fg="bright_white",
+                color=True,
             )
 
         for gpu in node.gpus:
@@ -104,12 +105,14 @@ def _show_non_dense(
                         ),
                         fg=color,
                         nl=True,
+                        color=True,
                     )
                 else:
                     click.secho(
                         "{} {} {}".format(gpu_record, res_record, err_msg),
                         fg=color,
                         nl=False,
+                        color=True,
                     )
 
                 for proc in gpu.processes:
@@ -138,6 +141,7 @@ def _show_non_dense(
                             ),
                             fg=color,
                             nl=only_errors,
+                            color=True,
                         )
 
         if not only_errors:
@@ -225,7 +229,7 @@ def _show_dense(nodes: List[Node], user_names: Set[str], display_time, display_l
                 name_str, node.update_time.strftime("%Y-%m-%d %H:%M:%S")
             )
 
-        click.echo(name_str)
+        click.echo(name_str, color=True)
 
 
 @click.command(name="gpu-use")
@@ -274,6 +278,14 @@ def _show_dense(nodes: List[Node], user_names: Set[str], display_time, display_l
     is_flag=True,
 )
 def gpu_use_cli(node, user, dense, only_errors, display_time, display_load):
+    r"""Display real-time information about the GPUs on skynet
+
+
+    Notes:
+
+        - When using gpu-use with `watch`, add `--color` for the output to be displayed
+correctly, i.e. use `watch --color gpu-use -d`.
+    """
     if only_errors and dense:
         raise click.BadArgumentUsage("--dense and --errors are mutually exclusive")
 
