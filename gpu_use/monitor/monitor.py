@@ -173,14 +173,24 @@ def node_monitor():
     else:
         ps_info = []
 
+    all_pids = set()
+
     for info_line in ps_info:
         info = info_line.split(",:,")
-        pid2user_info[int(info[0])] = [pid2user[int(info[0])]] + info[1:]
+        pid = int(info[0])
+        # There is a race between getting the long user-name
+        # and a process dying
+        if pid in pid2user:
+            all_pids.add(pid)
+            pid2user_info[pid] = [pid2user[pid]] + info[1:]
 
     gpu2job_info = dict()
     for info in slurm_pids:
         pid = info["pid"]
         jid = info["jid"]
+        if pid not in all_pids:
+            continue
+
         pid2job_info[pid] = jid
 
         if osp.exists(environ_file.format(pid)):
@@ -208,6 +218,8 @@ def node_monitor():
                 gpu2job_info[gpu_id] = dict(
                     jid=jid, user=pid2user_info[pid][0].strip()[0:32]
                 )
+        else:
+            all_pids.remove(pid)
 
     existing_processes = {
         (proc.id, proc.node_name, proc.gpu_id): proc
@@ -231,7 +243,6 @@ def node_monitor():
         return gpu.slurm_job
 
     new_processes = []
-    all_pids = set()
 
     for gpu_id in sorted(gpu2pid_info.keys()):
         if gpu_id >= len(node.gpus):
@@ -245,7 +256,8 @@ def node_monitor():
             _add_job(gpu, job_info["jid"], job_info["user"])
 
         for pid in gpu2pid_info[gpu_id]:
-            all_pids.add(pid)
+            if pid not in all_pids:
+                continue
 
             ancestors = get_lineage(pid)
             if ancestors is None:
