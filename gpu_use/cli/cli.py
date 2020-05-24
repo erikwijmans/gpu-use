@@ -20,13 +20,16 @@ def _supports_unicode() -> bool:
 
 
 def _is_valid_use(gpu: GPU) -> bool:
-    return all(proc.slurm_job is not None for proc in gpu.processes)
+    return all(
+        (proc.slurm_job is not None and proc.slurm_job == gpu.slurm_job)
+        for proc in gpu.processes
+    )
 
 
 def _is_user_on_gpu(gpu: GPU, user_names: Set[str]) -> bool:
     return (
         len(user_names) == 0
-        or any(proc.user in user_names for proc in gpu.processes)
+        or any((proc.user in user_names) for proc in gpu.processes)
         or (gpu.slurm_job is not None and gpu.slurm_job.user in user_names)
     )
 
