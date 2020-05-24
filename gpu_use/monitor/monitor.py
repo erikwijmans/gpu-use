@@ -227,7 +227,8 @@ def node_monitor():
 
         gpu.slurm_job = existing_jobs[jid]
         gpu.slurm_job.user = user
-        return existing_jobs[jid]
+
+        return gpu.slurm_job
 
     new_processes = []
     all_pids = set()
@@ -259,14 +260,25 @@ def node_monitor():
             job_ids = list(
                 set([pid2job_info[i] for i in ancestors if i in pid2job_info.keys()])
             )
+            if len(job_ids) > 1:
+                raise RuntimeError(
+                    "More than 1 job ID for a process: {}".format(job_ids)
+                )
 
-            user = pid2user_info[pid][0].strip()[0:32]
+            if len(job_ids) == 1:
+                jid = job_ids[0]
+                if not jid in existing_jobs:
+                    raise RuntimeError(
+                        "Proc associated with non-existent job ID: PID: {} JID: {}".format(
+                            pid, jid
+                        )
+                    )
 
-            if len(job_ids) >= 1:
-                slurm_job = _add_job(gpu, job_ids[0], user)
+                slurm_job = existing_jobs[jid]
             else:
                 slurm_job = None
 
+            user = pid2user_info[pid][0].strip()[0:32]
             cmnd = pid2user_info[pid][2][0:128]
 
             proc.user = user
