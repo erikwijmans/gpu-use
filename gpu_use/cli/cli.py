@@ -9,9 +9,14 @@ import sys
 from typing import List, Set
 
 import click
+import sqlalchemy as sa
 
 from gpu_use.db.schema import GPU, GPUProcess, Node, SLURMJob
 from gpu_use.db.session import SessionMaker
+
+
+def _supports_unicode() -> bool:
+    return "UTF-8" in os.environ.get("LANG", "en_US")
 
 
 def _is_valid_use(gpu: GPU) -> bool:
@@ -66,17 +71,17 @@ def _show_non_dense(
             if len(gpu.processes) > 0:
                 in_use = True
 
-            res_char = u"\u25A1"
-            use_char = u"\u25A1"
+            res_char = u"\u25A1" if _supports_unicode() else "-"
+            use_char = u"\u25A1" if _supports_unicode() else "-"
             res_record = "-"
             color = "bright_white"
 
             if reserved:
-                res_char = u"\u25A0"
+                res_char = u"\u25A0" if _supports_unicode() else "#"
                 res_record = "{} ({})".format(gpu.slurm_job.user, gpu.slurm_job.job_id)
 
             if in_use:
-                use_char = u"\u25A0"
+                use_char = u"\u25A0" if _supports_unicode() else "#"
 
             if reserved and in_use and not valid_use:
                 color = "red"
@@ -194,15 +199,15 @@ def _show_dense(nodes: List[Node], user_names: Set[str], display_time, display_l
 
             valid_use = _is_valid_use(gpu)
 
-            res_char = u"\u25A1"
-            use_char = u"\u25A1"
+            res_char = u"\u25A1" if _supports_unicode() else "-"
+            use_char = u"\u25A1" if _supports_unicode() else "-"
             color = "bright_white"
 
             if reserved:
-                res_char = u"\u25A0"
+                res_char = u"\u25A0" if _supports_unicode() else "#"
 
             if in_use:
-                use_char = u"\u25A0"
+                use_char = u"\u25A0" if _supports_unicode() else "#"
 
             if reserved and in_use and not valid_use:
                 color = "red"
@@ -340,7 +345,21 @@ correctly, i.e. use `watch --color gpu-use -d`.
 
         nodes = nodes.filter(node_filter)
 
-    nodes = nodes.order_by(Node.name).all()
+    nodes = (
+        nodes.order_by(Node.name)
+        .options(
+            sa.orm.joinedload(Node.gpus),
+            sa.orm.joinedload(Node.slurm_jobs),
+            sa.orm.joinedload(Node.gpus).joinedload("processes"),
+            sa.orm.joinedload(Node.slurm_jobs).joinedload("processes"),
+        )
+        .all()
+    )
+
+    if not _supports_unicode():
+        click.echo(
+            "Terminal does not support unicode, do `export LANG=en_US.UTF-8` for a better experience (may also need to start tmux with `-u`)"
+        )
 
     user_names = set(user_names)
     if dense:

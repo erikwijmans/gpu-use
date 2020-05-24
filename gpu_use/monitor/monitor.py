@@ -46,18 +46,16 @@ def get_lineage(pid):
     return ancestors
 
 
-gpu_command = "nvidia-smi -q -x"
-pid_command = "ps -o %p,:,%u,:,%t,:,%a,:,%P --no-header -p "
+gpu_command = "timeout 5m nvidia-smi -q -x"
+pid_command = "ps -o %p,:,%t,:,%a,:,%P --no-header -p "
+user_command = "ps -o pid,user:32 --no-header -p "
 listpids_command = "scontrol listpids"
 environ_file = "/proc/{}/environ"
 print_environ_file_command = "cat {} | xargs --null --max-args=1 echo"
 
 
-def is_gpu_state_same_and_all_in_use(gpu2pid_info):
-    hostname = os.uname()[1]
-    session = SessionMaker()
-
-    gpus = session.query(GPU).filter_by(node_name=hostname).order_by(GPU.id).all()
+def is_gpu_state_same_and_all_in_use(node: Node, gpu2pid_info):
+    gpus = node.gpus
     for gpu_id in sorted(gpu2pid_info.keys()):
         if gpu_id >= len(gpus):
             return False
@@ -79,16 +77,6 @@ def node_monitor():
     # Collect information about system health overall
     hostname = os.uname()[1]
 
-    session = SessionMaker()
-    node = session.query(Node).filter_by(name=hostname).first()
-    if node is None:
-        node = Node(name=hostname)
-        session.add(node)
-
-    node.load = "{:.2f} / {:.2f} / {:.2f}".format(*os.getloadavg())
-    node.update_time = datetime.datetime.now()
-    session.commit()
-
     # Init container variables
     gpu_info = {}
 
@@ -98,7 +86,11 @@ def node_monitor():
     pid2user_info = {}
 
     pids = []
-    smi_out = subprocess.check_output(shlex.split(gpu_command)).decode("utf-8")
+    try:
+        smi_out = subprocess.check_output(shlex.split(gpu_command)).decode("utf-8")
+    except subprocess.CalledProcessError:
+        return
+
     gpu_xml = etree.fromstring(smi_out)  # nvidia-smi
     for gpu in gpu_xml.findall("gpu"):
         gpu_id = int(gpu.find("minor_number").text)
@@ -108,7 +100,27 @@ def node_monitor():
         ]
         pids.extend(gpu2pid_info[gpu_id])
 
-    if is_gpu_state_same_and_all_in_use(gpu2pid_info):
+    session = SessionMaker()
+    node = (
+        session.query(Node)
+        .filter_by(name=hostname)
+        .options(
+            sa.orm.joinedload(Node.gpus),
+            sa.orm.joinedload(Node.slurm_jobs),
+            sa.orm.joinedload(Node.gpus).joinedload("processes"),
+            sa.orm.joinedload(Node.slurm_jobs).joinedload("processes"),
+        )
+        .first()
+    )
+    if node is None:
+        node = Node(name=hostname)
+        session.add(node)
+
+    node.load = "{:.2f} / {:.2f} / {:.2f}".format(*os.getloadavg())
+    node.update_time = datetime.datetime.now()
+    session.commit()
+
+    if is_gpu_state_same_and_all_in_use(node, gpu2pid_info):
         return
 
     # Get jobid to pid mappings
@@ -132,6 +144,7 @@ def node_monitor():
     pid_list = ",".join(
         [str(y) for y in pids] + [str(info["pid"]) for info in slurm_pids]
     )
+    pid2user = {}
     if len(pid_list) > 0:
         ps_info = (
             subprocess.check_output(
@@ -141,12 +154,28 @@ def node_monitor():
             .strip()
             .split("\n")
         )
+
+        user_names_long = (
+            subprocess.check_output(
+                shlex.split(user_command + pid_list), stderr=subprocess.STDOUT
+            )
+            .decode("utf-8")
+            .strip()
+            .split("\n")
+        )
+        for line in user_names_long:
+            line = line.strip()
+            if len(line) == 0:
+                continue
+
+            pid, user = line.split(" ")
+            pid2user[int(pid)] = user
     else:
         ps_info = []
 
     for info_line in ps_info:
         info = info_line.split(",:,")
-        pid2user_info[int(info[0])] = info[1:]
+        pid2user_info[int(info[0])] = [pid2user[int(info[0])]] + info[1:]
 
     gpu2job_info = dict()
     for info in slurm_pids:
@@ -197,6 +226,7 @@ def node_monitor():
             existing_jobs[jid] = job
 
         gpu.slurm_job = existing_jobs[jid]
+        gpu.slurm_job.user = user
         return existing_jobs[jid]
 
     new_processes = []
