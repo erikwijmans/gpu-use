@@ -2,6 +2,7 @@ from typing import List, Set
 
 import click
 
+from gpu_use.cli.regular_view import NODE_NAME_WITH_TIME
 from gpu_use.cli.utils import is_user_on_gpu, parse_gpu, parse_process
 from gpu_use.db.schema import Node
 
