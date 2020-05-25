@@ -15,6 +15,12 @@ from gpu_use.db.session import SessionMaker
 
 DEBUG_CHECK = "scontrol show job {} 2>/dev/null | grep \"Partition\" | awk -F'[ =]+' '{{print $3 == \"debug\"}}'"
 
+NODE_GPU_ORDER = {
+    "ripl-s1": {
+        smi_id: cuda_id for cuda_id, smi_id in enumerate([0, 1, 2, 4, 5, 6, 3, 7])
+    }
+}
+
 
 def _is_debug_job(jid):
     try:
@@ -91,9 +97,15 @@ def node_monitor():
     except subprocess.CalledProcessError:
         return
 
+    # ripl-s1 has a weird GPU order according to CUDA, so
+    # we need to re-order nvidia-smi
+    gpu_order_mapping = NODE_GPU_ORDER.get(
+        hostname, {smi_id: cuda_id for cuda_id, smi_id in enumerate(range(8))}
+    )
     gpu_xml = etree.fromstring(smi_out)  # nvidia-smi
     for gpu in gpu_xml.findall("gpu"):
         gpu_id = int(gpu.find("minor_number").text)
+        gpu_id = gpu_order_mapping[gpu_id]
         gpu2pid_info[gpu_id] = [
             int(y.find("pid").text)
             for y in gpu.find("processes").findall("process_info")
@@ -118,7 +130,6 @@ def node_monitor():
 
     node.load = "{:.2f} / {:.2f} / {:.2f}".format(*os.getloadavg())
     node.update_time = datetime.datetime.now()
-    session.commit()
 
     if is_gpu_state_same_and_all_in_use(node, gpu2pid_info):
         return
@@ -228,7 +239,7 @@ def node_monitor():
     }
     existing_jobs = {job.job_id: job for job in node.slurm_jobs}
 
-    def _add_job(gpu, jid, user):
+    def _add_job(jid, user):
         if jid not in existing_jobs:
             job = SLURMJob(
                 job_id=jid, node=node, user=user, is_debug_job=_is_debug_job(jid)
@@ -237,10 +248,7 @@ def node_monitor():
             session.add(job)
             existing_jobs[jid] = job
 
-        gpu.slurm_job = existing_jobs[jid]
-        gpu.slurm_job.user = user
-
-        return gpu.slurm_job
+        return existing_jobs[jid]
 
     new_processes = []
 
@@ -253,7 +261,9 @@ def node_monitor():
 
         if gpu_id in gpu2job_info:
             job_info = gpu2job_info[gpu_id]
-            _add_job(gpu, job_info["jid"], job_info["user"])
+            gpu.slurm_job = _add_job(job_info["jid"], job_info["user"])
+        else:
+            gpu.slurm_job = None
 
         for pid in gpu2pid_info[gpu_id]:
             if pid not in all_pids:
@@ -277,20 +287,14 @@ def node_monitor():
                     "More than 1 job ID for a process: {}".format(job_ids)
                 )
 
+            user = pid2user_info[pid][0].strip()[0:32]
+
             if len(job_ids) == 1:
                 jid = job_ids[0]
-                if not jid in existing_jobs:
-                    raise RuntimeError(
-                        "Proc associated with non-existent job ID: PID: {} JID: {}".format(
-                            pid, jid
-                        )
-                    )
-
-                slurm_job = existing_jobs[jid]
+                slurm_job = _add_job(jid, user)
             else:
                 slurm_job = None
 
-            user = pid2user_info[pid][0].strip()[0:32]
             cmnd = pid2user_info[pid][2][0:128]
 
             proc.user = user
