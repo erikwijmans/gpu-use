@@ -7,6 +7,15 @@ from gpu_use.db.schema import Node
 
 
 def show_errors(nodes: List[Node], user_names: Set[str]):
+    longest_name_length = max(
+        len(node.name)
+        for node in nodes
+        if any(
+            is_user_on_gpu(gpu, user_names) and parse_gpu(gpu).error
+            for gpu in node.gpus
+        )
+    )
+
     for node in nodes:
         for gpu in node.gpus:
             if not is_user_on_gpu(gpu, user_names):
@@ -17,24 +26,26 @@ def show_errors(nodes: List[Node], user_names: Set[str]):
             if res.error:
                 gpu_record = "{}{}[{}]".format(res.res_char, res.use_char, gpu.id)
                 click.secho(
-                    "{} {} {} {}".format(
-                        node.name, gpu_record, res.res_record, res.err_msg
+                    "{:{width}} {} {} {}".format(
+                        node.name,
+                        gpu_record,
+                        res.res_record,
+                        res.err_msg,
+                        width=longest_name_length,
                     ),
                     fg=res.color,
-                    nl=True,
                     color=True,
                 )
 
                 for proc in gpu.processes:
                     proc_res = parse_process(gpu, proc)
 
-                    if proc_res.error:
-                        click.secho(
-                            "       "
-                            + "{} {} {} {}".format(
-                                proc.id, proc.command, proc.user, proc_res.err_msg
-                            ),
-                            fg=proc_res.color,
-                            nl=True,
-                            color=True,
-                        )
+                    click.secho(
+                        (" " * longest_name_length)
+                        + "       "
+                        + "{} {} {} {}".format(
+                            proc.id, proc.command, proc.user, proc_res.err_msg
+                        ),
+                        fg=proc_res.color,
+                        color=True,
+                    )
