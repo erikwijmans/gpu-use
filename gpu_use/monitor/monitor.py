@@ -130,6 +130,7 @@ def node_monitor():
 
     node.load = "{:.2f} / {:.2f} / {:.2f}".format(*os.getloadavg())
     node.update_time = datetime.datetime.now()
+    session.commit()
 
     if is_gpu_state_same_and_all_in_use(node, gpu2pid_info):
         return
