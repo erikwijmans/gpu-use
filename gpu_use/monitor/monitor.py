@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 import datetime
+import logging
 import os
 import os.path as osp
 import shlex
@@ -20,6 +21,16 @@ NODE_GPU_ORDER = {
         smi_id: cuda_id for cuda_id, smi_id in enumerate([0, 1, 2, 4, 5, 6, 3, 7])
     }
 }
+
+
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+ch.setFormatter(formatter)
+
+logger = logging.getLogger("gpu-used")
+logger.addHandler(ch)
+logger.setLevel(logging.INFO)
 
 
 def _is_debug_job(jid):
@@ -80,6 +91,18 @@ def is_gpu_state_same_and_all_in_use(node: Node, gpu2pid_info):
 
 
 def node_monitor():
+    logger.info("Monitor Start")
+
+    session = SessionMaker()
+    do_node_monitor(session)
+    session.close()
+
+    logger.info("Monitor End")
+
+
+# Put this in a seperate function,
+# that way we can always do session.close()
+def do_node_monitor(session):
     # Collect information about system health overall
     hostname = os.uname()[1]
 
@@ -91,11 +114,14 @@ def node_monitor():
     pid2job_info = {}
     pid2user_info = {}
 
+    logger.info("Querying nvidia-smi")
     pids = []
     try:
         smi_out = subprocess.check_output(shlex.split(gpu_command)).decode("utf-8")
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
+        logger.error(str(e))
         return
+    logger.info("Done query nvidia-smi")
 
     # ripl-s1 has a weird GPU order according to CUDA, so
     # we need to re-order nvidia-smi
@@ -112,7 +138,6 @@ def node_monitor():
         ]
         pids.extend(gpu2pid_info[gpu_id])
 
-    session = SessionMaker()
     node = (
         session.query(Node)
         .filter_by(name=hostname)
@@ -133,8 +158,10 @@ def node_monitor():
     session.commit()
 
     if is_gpu_state_same_and_all_in_use(node, gpu2pid_info):
+        logger.info("State same, exiting")
         return
 
+    logger.info("Querying slurm PIDs")
     # Get jobid to pid mappings
     try:
         slurm_pids = (
@@ -143,8 +170,11 @@ def node_monitor():
             .strip()
             .split("\n")[1:]
         )  # job -> pid mappings
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
+        logger.error(str(e))
         slurm_pids = []
+
+    logger.info("Done quering slurm PIDs")
 
     slurm_pids = [info.split() for info in slurm_pids]
     slurm_pids = [dict(pid=int(info[0]), jid=int(info[1])) for info in slurm_pids]
@@ -158,23 +188,32 @@ def node_monitor():
     )
     pid2user = {}
     if len(pid_list) > 0:
-        ps_info = (
-            subprocess.check_output(
-                shlex.split(pid_command + pid_list), stderr=subprocess.STDOUT
+        try:
+            ps_info = (
+                subprocess.check_output(
+                    shlex.split(pid_command + pid_list), stderr=subprocess.STDOUT
+                )
+                .decode("utf-8")
+                .strip()
+                .split("\n")
             )
-            .decode("utf-8")
-            .strip()
-            .split("\n")
-        )
+        except subprocess.CalledProcessError as e:
+            logger.error(str(e))
+            return
 
-        user_names_long = (
-            subprocess.check_output(
-                shlex.split(user_command + pid_list), stderr=subprocess.STDOUT
+        try:
+            user_names_long = (
+                subprocess.check_output(
+                    shlex.split(user_command + pid_list), stderr=subprocess.STDOUT
+                )
+                .decode("utf-8")
+                .strip()
+                .split("\n")
             )
-            .decode("utf-8")
-            .strip()
-            .split("\n")
-        )
+        except subprocess.CalledProcessError as e:
+            logger.error(str(e))
+            return
+
         for line in user_names_long:
             line = line.strip()
             if len(line) == 0:
@@ -238,7 +277,9 @@ def node_monitor():
         for gpu in node.gpus
         for proc in gpu.processes
     }
-    existing_jobs = {job.job_id: job for job in node.slurm_jobs}
+
+    # Jobs can migrate between nodes, so we need to query all jobs!
+    existing_jobs = {job.job_id: job for job in session.query(SLURMJob).all()}
 
     def _add_job(jid, user):
         if jid not in existing_jobs:
@@ -249,7 +290,11 @@ def node_monitor():
             session.add(job)
             existing_jobs[jid] = job
 
-        return existing_jobs[jid]
+        job = existing_jobs[jid]
+        job.node = node
+        job.user = user
+
+        return job
 
     new_processes = []
 
@@ -272,6 +317,7 @@ def node_monitor():
 
             ancestors = get_lineage(pid)
             if ancestors is None:
+                logger.error("{} has no ancestors".format(pid))
                 continue
 
             if (pid, hostname, gpu_id) in existing_processes:
@@ -303,6 +349,8 @@ def node_monitor():
             proc.slurm_job = slurm_job
 
     session.add_all(new_processes)
+    session.commit()
+
     for proc in (
         session.query(GPUProcess)
         .filter(
