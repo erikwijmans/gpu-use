@@ -2,7 +2,12 @@ from typing import List, Set
 
 import click
 
-from gpu_use.cli.utils import is_user_on_gpu, parse_gpu, parse_process
+from gpu_use.cli.utils import (
+    gray_if_out_of_date,
+    is_user_on_gpu,
+    parse_gpu,
+    parse_process,
+)
 from gpu_use.db.schema import Node
 
 NODE_NAME_WITH_TIME = "{}\t\tUpdated: {}"
@@ -18,11 +23,16 @@ def show_regular(nodes: List[Node], user_names: Set[str], display_time, display_
                 name_str, node.update_time.strftime("%Y-%m-%d %H:%M:%S")
             )
 
-        click.secho(
-            "-------------------------------------------------------------------\n"
-            + name_str
-            + "\n-------------------------------------------------------------------",
-            fg="bright_white",
+        click.echo(
+            gray_if_out_of_date(
+                click.style(
+                    "-------------------------------------------------------------------\n"
+                    + name_str
+                    + "\n-------------------------------------------------------------------",
+                    fg="bright_white",
+                ),
+                node.update_time,
+            ),
             color=True,
         )
 
@@ -33,9 +43,14 @@ def show_regular(nodes: List[Node], user_names: Set[str], display_time, display_
             res = parse_gpu(gpu)
 
             gpu_record = "{}{}[{}]".format(res.res_char, res.use_char, gpu.id)
-            click.secho(
-                "{} {} {}".format(gpu_record, res.res_record, res.err_msg),
-                fg=res.color,
+            click.echo(
+                gray_if_out_of_date(
+                    click.style(
+                        "{} {} {}".format(gpu_record, res.res_record, res.err_msg),
+                        fg=res.color,
+                    ),
+                    node.update_time,
+                ),
                 nl=False,
                 color=True,
             )
@@ -44,12 +59,20 @@ def show_regular(nodes: List[Node], user_names: Set[str], display_time, display_
                 for proc in gpu.processes:
                     proc_res = parse_process(gpu, proc)
                     if proc_res.error:
-                        click.secho(
-                            "       "
-                            + "{} {} {} {}".format(
-                                proc.id, proc.command, proc.user, proc_res.err_msg
+                        click.echo(
+                            gray_if_out_of_date(
+                                click.style(
+                                    "       "
+                                    + "{} {} {} {}".format(
+                                        proc.id,
+                                        proc.command,
+                                        proc.user,
+                                        proc_res.err_msg,
+                                    ),
+                                    fg=proc_res.color,
+                                ),
+                                node.update_time,
                             ),
-                            fg=proc_res.color,
                             nl=False,
                             color=True,
                         )

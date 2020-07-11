@@ -1,7 +1,10 @@
+import datetime
+import io
 import os
 from typing import List, Optional, Set
 
 import attr
+import click
 import sqlalchemy as sa
 
 from gpu_use.db.schema import GPU, GPUProcess, Node, SLURMJob
@@ -24,6 +27,21 @@ def is_user_on_gpu(gpu: GPU, user_names: Set[str]) -> bool:
         or any((proc.user in user_names) for proc in gpu.processes)
         or (gpu.slurm_job is not None and gpu.slurm_job.user in user_names)
     )
+
+
+def gray_if_out_of_date(
+    string: str,
+    update_time: datetime.datetime,
+    max_lag_time=datetime.timedelta(minutes=10),
+):
+    if (datetime.datetime.now() - update_time) < max_lag_time:
+        return string
+
+    stripped_string = io.StringIO()
+    # Use an echo into a io.StringIO() to strip existing formatting
+    click.echo(message=string, color=False, nl=False, file=stripped_string)
+    stripped_string.seek(0)
+    return click.style(stripped_string.read(), fg="white", dim=True)
 
 
 @attr.s(auto_attribs=True)

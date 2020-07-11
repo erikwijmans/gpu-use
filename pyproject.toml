@@ -1,3 +1,9 @@
+[tool.isort]
+profile = "black"
+known_third_party = ["attr", "click", "daemon", "sqlalchemy"]
+
+
+
 [tool.poetry]
 name = "gpu-use"
 version = "0.1.0"

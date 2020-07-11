@@ -3,11 +3,11 @@
 import datetime
 import logging
 import os
-import os.path as osp
 import shlex
 import subprocess
 import sys
-import xml.etree.ElementTree as etree
+from os import path as osp
+from xml.etree import ElementTree as etree
 
 import sqlalchemy as sa
 
@@ -19,11 +19,17 @@ DEBUG_CHECK = "scontrol show job {} 2>/dev/null | grep \"Partition\" | awk -F'[ 
 NODE_GPU_ORDER = {
     "ripl-s1": {
         smi_id: cuda_id for cuda_id, smi_id in enumerate([0, 1, 2, 4, 5, 6, 3, 7])
-    }
+    },
+    "vicki": {
+        smi_id: cuda_id for cuda_id, smi_id in enumerate([0, 2, 3, 5, 6, 7, 1, 4])
+    },
 }
 
 
-formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+formatter = logging.Formatter(
+    "[%(asctime)s] p%(process)s {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s",
+    "%m-%d %H:%M:%S",
+)
 ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
@@ -94,8 +100,14 @@ def node_monitor():
     logger.info("Monitor Start")
 
     session = SessionMaker()
-    do_node_monitor(session)
-    session.close()
+    try:
+        do_node_monitor(session)
+    except UnicodeDecodeError as e:
+        logger.error(str(e))
+    except OSError as e:
+        logger.error(str(e))
+    finally:
+        session.close()
 
     logger.info("Monitor End")
 

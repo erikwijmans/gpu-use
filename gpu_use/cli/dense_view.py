@@ -3,7 +3,12 @@ from typing import List, Set
 import click
 
 from gpu_use.cli.regular_view import NODE_NAME_WITH_TIME
-from gpu_use.cli.utils import is_user_on_gpu, parse_gpu, parse_process
+from gpu_use.cli.utils import (
+    gray_if_out_of_date,
+    is_user_on_gpu,
+    parse_gpu,
+    parse_process,
+)
 from gpu_use.db.schema import Node
 
 
@@ -57,4 +62,5 @@ def show_dense(nodes: List[Node], user_names: Set[str], display_time, display_lo
                 name_str, node.update_time.strftime("%Y-%m-%d %H:%M:%S")
             )
 
+        name_str = gray_if_out_of_date(name_str, node.update_time)
         click.echo(name_str, color=True)
