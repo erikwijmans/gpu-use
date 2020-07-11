@@ -106,6 +106,8 @@ def node_monitor():
         logger.error(str(e))
     except OSError as e:
         logger.error(str(e))
+    except subprocess.CalledProcessError as e:
+        logger.error(str(e))
     finally:
         session.close()
 
@@ -128,11 +130,7 @@ def do_node_monitor(session):
 
     logger.info("Querying nvidia-smi")
     pids = []
-    try:
-        smi_out = subprocess.check_output(shlex.split(gpu_command)).decode("utf-8")
-    except subprocess.CalledProcessError as e:
-        logger.error(str(e))
-        return
+    smi_out = subprocess.check_output(shlex.split(gpu_command)).decode("utf-8")
     logger.info("Done query nvidia-smi")
 
     # ripl-s1 has a weird GPU order according to CUDA, so
@@ -200,31 +198,23 @@ def do_node_monitor(session):
     )
     pid2user = {}
     if len(pid_list) > 0:
-        try:
-            ps_info = (
-                subprocess.check_output(
-                    shlex.split(pid_command + pid_list), stderr=subprocess.STDOUT
-                )
-                .decode("utf-8")
-                .strip()
-                .split("\n")
+        ps_info = (
+            subprocess.check_output(
+                shlex.split(pid_command + pid_list), stderr=subprocess.STDOUT
             )
-        except subprocess.CalledProcessError as e:
-            logger.error(str(e))
-            return
+            .decode("utf-8")
+            .strip()
+            .split("\n")
+        )
 
-        try:
-            user_names_long = (
-                subprocess.check_output(
-                    shlex.split(user_command + pid_list), stderr=subprocess.STDOUT
-                )
-                .decode("utf-8")
-                .strip()
-                .split("\n")
+        user_names_long = (
+            subprocess.check_output(
+                shlex.split(user_command + pid_list), stderr=subprocess.STDOUT
             )
-        except subprocess.CalledProcessError as e:
-            logger.error(str(e))
-            return
+            .decode("utf-8")
+            .strip()
+            .split("\n")
+        )
 
         for line in user_names_long:
             line = line.strip()
