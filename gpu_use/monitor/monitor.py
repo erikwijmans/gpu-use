@@ -261,12 +261,14 @@ def do_node_monitor(session):
             if len(cuda_devices) == 0:
                 continue
 
-            cuda_devices = cuda_devices[0].split("=")[1]
+            cuda_devices = cuda_devices[0].split("=")[1].strip()
             if cuda_devices == "NoDevFiles":
                 continue
 
-            cuda_devices = cuda_devices.split(",")
-            for gpu_id in cuda_devices:
+            if cuda_devices == "":
+                continue
+
+            for gpu_id in cuda_devices.split(","):
                 gpu_id = int(gpu_id)
                 gpu2job_info[gpu_id] = dict(
                     jid=jid, user=pid2user_info[pid][0].strip()[0:32]
