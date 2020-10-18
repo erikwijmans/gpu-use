@@ -1,13 +1,14 @@
 import datetime
 import io
 import os
+import re
 from typing import List, Optional, Set
 
 import attr
 import click
 import sqlalchemy as sa
 
-from gpu_use.db.schema import GPU, GPUProcess, Node, SLURMJob
+from gpu_use.db.schema import GPU, GPUProcess, Lab, Node, SLURMJob, User
 
 
 def supports_unicode() -> bool:
@@ -21,12 +22,17 @@ def is_valid_use(gpu: GPU) -> bool:
     )
 
 
-def is_user_on_gpu(gpu: GPU, user_names: Set[str]) -> bool:
-    return (
-        len(user_names) == 0
-        or any((proc.user in user_names) for proc in gpu.processes)
-        or (gpu.slurm_job is not None and gpu.slurm_job.user in user_names)
-    )
+def is_user_on_gpu(gpu: GPU, users: Optional[List[User]]) -> bool:
+    return users is None or gpu.user in users
+
+
+def filter_labs(session, lab) -> List[Lab]:
+    lab_re = re.compile(lab)
+    labs = [l for l in session.query(Lab).all() if lab_re.match(l.name) is not None]
+    if len(labs) == 0:
+        raise click.BadArgumentUsage("No labs matched {}".format(lab))
+
+    return labs
 
 
 def gray_if_out_of_date(
@@ -65,7 +71,7 @@ def parse_gpu(gpu: GPU) -> GPUParseResult:
 
     if res.reserved:
         res.res_char = u"\u25A0" if supports_unicode() else "#"
-        res.res_record = "{} ({})".format(gpu.slurm_job.user, gpu.slurm_job.job_id)
+        res.res_record = "{} ({})".format(gpu.slurm_job.user_name, gpu.slurm_job.job_id)
 
     if res.in_use:
         res.use_char = u"\u25A0" if supports_unicode() else "#"

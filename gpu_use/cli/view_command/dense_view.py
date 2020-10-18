@@ -2,21 +2,20 @@ from typing import List, Set
 
 import click
 
-from gpu_use.cli.regular_view import NODE_NAME_WITH_TIME
 from gpu_use.cli.utils import (
     gray_if_out_of_date,
     is_user_on_gpu,
     parse_gpu,
     parse_process,
 )
-from gpu_use.db.schema import Node
+from gpu_use.cli.view_command.regular_view import NODE_NAME_WITH_TIME
+from gpu_use.db.schema import Node, User
 
 
-def show_dense(nodes: List[Node], user_names: Set[str], display_time, display_load):
+def show_dense(nodes: List[Node], users: List[User], display_time, display_load):
     longest_name_length = max(len(node.name) for node in nodes)
     max_gpus = max(
-        len([gpu for gpu in node.gpus if is_user_on_gpu(gpu, user_names)])
-        for node in nodes
+        len([gpu for gpu in node.gpus if is_user_on_gpu(gpu, users)]) for node in nodes
     )
 
     for node in nodes:
@@ -35,7 +34,7 @@ def show_dense(nodes: List[Node], user_names: Set[str], display_time, display_lo
 
         gpus_str = ""
         for gpu in node.gpus:
-            if not is_user_on_gpu(gpu, user_names):
+            if not is_user_on_gpu(gpu, users):
                 continue
 
             gpu_tot = gpu_tot + 1
@@ -48,8 +47,12 @@ def show_dense(nodes: List[Node], user_names: Set[str], display_time, display_lo
             if res.in_use:
                 gpu_used += 1
 
-            gpus_str += click.style(
-                "\t{}{}[{}]".format(res.res_char, res.use_char, gpu.id), fg=res.color
+            gpus_str += gray_if_out_of_date(
+                click.style(
+                    "\t{}{}[{}]".format(res.res_char, res.use_char, gpu.id),
+                    fg=res.color,
+                ),
+                gpu.update_time,
             )
 
         for _ in range(max_gpus - gpu_tot):

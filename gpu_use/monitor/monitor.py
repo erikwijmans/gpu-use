@@ -1,20 +1,29 @@
 #!/usr/bin/python
-
 import datetime
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
 from os import path as osp
+from typing import Any
 from xml.etree import ElementTree as etree
 
+import attr
 import sqlalchemy as sa
 
-from gpu_use.db.schema import GPU, GPUProcess, Node, SLURMJob
+from gpu_use.db.schema import GPU, GPUProcess, Lab, Node, SLURMJob, User
 from gpu_use.db.session import SessionMaker
 
-DEBUG_CHECK = "scontrol show job {} 2>/dev/null | grep \"Partition\" | awk -F'[ =]+' '{{print $3 == \"debug\"}}'"
+ACCOUNT_REGEX = re.compile("Account=(?P<account>\w.*?)\s")
+PARTITION_REGEX = re.compile("Partition=(?P<part>\w.*?)\s")
+CPU_REGEX = re.compile("cpu=(?P<cpus>\d+)")
+
+JOB_INFO = "scontrol show job {}"
+
+LAB_NAME_COMMAND = "sacctmgr -np show assoc format=account user={}"
+
 
 NODE_GPU_ORDER = {
     "ripl-s1": {
@@ -39,17 +48,51 @@ logger.addHandler(ch)
 logger.setLevel(logging.INFO)
 
 
-def _is_debug_job(jid):
-    try:
-        return bool(
-            int(
-                subprocess.check_output(DEBUG_CHECK.format(jid), shell=True).decode(
-                    "utf-8"
-                )
-            )
-        )
-    except ValueError:
-        return False
+@attr.s(auto_attribs=True)
+class JobInfo:
+    jid: int
+    user_name: str
+    user: User = None
+
+    _info_str: str = None
+
+    @property
+    def info_str(self) -> str:
+        if self._info_str is None:
+            self._info_str = subprocess.check_output(
+                shlex.split(JOB_INFO.format(self.jid))
+            ).decode("utf-8")
+
+        return self._info_str
+
+    @property
+    def cpus(self):
+        cpus = CPU_REGEX.search(self.info_str)
+        return cpus.group("cpus")
+
+    @property
+    def lab_name(self):
+        lab_name = ACCOUNT_REGEX.search(self.info_str)
+        return lab_name.group("account")
+
+    @property
+    def is_debug(self):
+        partition = PARTITION_REGEX.search(self.info_str).group("part")
+        return partition.lower() == "debug"
+
+
+def _get_lab_name_from_user_name(user_name: str) -> str:
+    res = (
+        subprocess.check_output(shlex.split(LAB_NAME_COMMAND.format(user_name)))
+        .decode("utf-8")
+        .strip()
+    )
+
+    accounts = res.split("|")
+    for acc in accounts:
+        acc = acc.strip()
+        if acc != "overcap":
+            return acc
 
 
 def get_lineage(pid):
@@ -120,6 +163,21 @@ def do_node_monitor(session):
     # Collect information about system health overall
     hostname = os.uname()[1]
 
+    node = (
+        session.query(Node)
+        .filter_by(name=hostname)
+        .options(
+            sa.orm.joinedload(Node.gpus),
+            sa.orm.joinedload(Node.slurm_jobs),
+            sa.orm.joinedload(Node.gpus).joinedload("processes"),
+            sa.orm.joinedload(Node.slurm_jobs).joinedload("processes"),
+        )
+        .first()
+    )
+    if node is None:
+        node = Node(name=hostname)
+        session.add(node)
+
     # Init container variables
     gpu_info = {}
 
@@ -148,20 +206,13 @@ def do_node_monitor(session):
         ]
         pids.extend(gpu2pid_info[gpu_id])
 
-    node = (
-        session.query(Node)
-        .filter_by(name=hostname)
-        .options(
-            sa.orm.joinedload(Node.gpus),
-            sa.orm.joinedload(Node.slurm_jobs),
-            sa.orm.joinedload(Node.gpus).joinedload("processes"),
-            sa.orm.joinedload(Node.slurm_jobs).joinedload("processes"),
-        )
-        .first()
-    )
-    if node is None:
-        node = Node(name=hostname)
-        session.add(node)
+        if gpu_id not in (gpu.id for gpu in node.gpus):
+            gpu = GPU(id=gpu_id, node=node)
+            session.add(gpu)
+
+        gpu = [gpu for gpu in node.gpus if gpu.id == gpu_id][0]
+
+        gpu.update_time = datetime.datetime.now()
 
     node.load = "{:.2f} / {:.2f} / {:.2f}".format(*os.getloadavg())
     node.update_time = datetime.datetime.now()
@@ -237,6 +288,7 @@ def do_node_monitor(session):
             all_pids.add(pid)
             pid2user_info[pid] = [pid2user[pid]] + info[1:]
 
+    jid2job_info = dict()
     gpu2job_info = dict()
     for info in slurm_pids:
         pid = info["pid"]
@@ -245,6 +297,9 @@ def do_node_monitor(session):
             continue
 
         pid2job_info[pid] = jid
+        jid2job_info[jid] = JobInfo(
+            jid=jid, user_name=pid2user_info[pid][0].strip()[0:32]
+        )
 
         if osp.exists(environ_file.format(pid)):
             p_environ = (
@@ -270,11 +325,35 @@ def do_node_monitor(session):
 
             for gpu_id in cuda_devices.split(","):
                 gpu_id = int(gpu_id)
-                gpu2job_info[gpu_id] = dict(
-                    jid=jid, user=pid2user_info[pid][0].strip()[0:32]
-                )
+                gpu2job_info[gpu_id] = jid2job_info[jid]
+
         else:
             all_pids.remove(pid)
+
+    existing_users = {user.name: user for user in session.query(User).all()}
+    for job_info in gpu2job_info.values():
+        user_name = job_info.user_name
+        if user_name not in existing_users:
+            user = User(name=user_name)
+            session.add(user)
+
+            lab_name = job_info.lab_name
+
+            lab = session.query(Lab).filter_by(name=lab_name).first()
+            if lab is None:
+                lab = Lab(name=lab_name)
+                session.add(lab)
+
+            user.lab = lab
+
+            existing_users[user_name] = user
+
+        user = existing_users[user_name]
+
+        job_info.user = user
+
+        if user not in node.users:
+            node.users.append(user)
 
     existing_processes = {
         (proc.id, proc.node_name, proc.gpu_id): proc
@@ -285,11 +364,14 @@ def do_node_monitor(session):
     # Jobs can migrate between nodes, so we need to query all jobs!
     existing_jobs = {job.job_id: job for job in session.query(SLURMJob).all()}
 
-    def _add_job(jid, user):
+    def _add_job(job_info: JobInfo):
+        jid = job_info.jid
+        user = job_info.user
         if jid not in existing_jobs:
             job = SLURMJob(
-                job_id=jid, node=node, user=user, is_debug_job=_is_debug_job(jid)
+                job_id=jid, node=node, user=user, is_debug_job=job_info.is_debug
             )
+            job.cpus = job_info.cpus
 
             session.add(job)
             existing_jobs[jid] = job
@@ -297,23 +379,24 @@ def do_node_monitor(session):
         job = existing_jobs[jid]
         job.node = node
         job.user = user
+        job.lab = user.lab
 
         return job
 
     new_processes = []
 
     for gpu_id in sorted(gpu2pid_info.keys()):
-        if gpu_id >= len(node.gpus):
-            gpu = GPU(id=gpu_id, node=node)
-            session.add(gpu)
-        else:
-            gpu = node.gpus[gpu_id]
+        gpu = [gpu for gpu in node.gpus if gpu.id == gpu_id][0]
 
         if gpu_id in gpu2job_info:
             job_info = gpu2job_info[gpu_id]
-            gpu.slurm_job = _add_job(job_info["jid"], job_info["user"])
+            gpu.slurm_job = _add_job(job_info)
+            gpu.user = job_info.user
+            gpu.lab = job_info.user.lab
         else:
             gpu.slurm_job = None
+            gpu.user = None
+            gpu.lab = None
 
         for pid in gpu2pid_info[gpu_id]:
             if pid not in all_pids:
@@ -338,17 +421,32 @@ def do_node_monitor(session):
                     "More than 1 job ID for a process: {}".format(job_ids)
                 )
 
-            user = pid2user_info[pid][0].strip()[0:32]
-
             if len(job_ids) == 1:
                 jid = job_ids[0]
-                slurm_job = _add_job(jid, user)
+                slurm_job = _add_job(jid2job_info[jid])
             else:
                 slurm_job = None
 
             cmnd = pid2user_info[pid][2][0:128]
 
-            proc.user = user
+            user_name = pid2user_info[pid][0].strip()[0:32]
+
+            if user_name not in existing_users:
+                user = User(name=user_name)
+                session.add(user)
+
+                lab_name = _get_lab_name_from_user_name(user_name)
+
+                lab = session.query(Lab).filter_by(name=lab_name).first()
+                if lab is None:
+                    lab = Lab(name=lab_name)
+                    session.add(lab)
+
+                user.lab = lab
+
+                existing_users[user_name] = user
+
+            proc.user = existing_users[user_name]
             proc.command = cmnd
             proc.slurm_job = slurm_job
 

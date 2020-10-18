@@ -8,17 +8,14 @@ from gpu_use.cli.utils import (
     parse_gpu,
     parse_process,
 )
-from gpu_use.db.schema import Node
+from gpu_use.db.schema import Node, User
 
 
-def show_errors(nodes: List[Node], user_names: Set[str]):
+def show_errors(nodes: List[Node], users: List[User]):
     valid_nodes_name_lengths = [
         len(node.name)
         for node in nodes
-        if any(
-            is_user_on_gpu(gpu, user_names) and parse_gpu(gpu).error
-            for gpu in node.gpus
-        )
+        if any(is_user_on_gpu(gpu, users) and parse_gpu(gpu).error for gpu in node.gpus)
     ]
 
     if len(valid_nodes_name_lengths) == 0:
@@ -29,13 +26,16 @@ def show_errors(nodes: List[Node], user_names: Set[str]):
 
     for node in nodes:
         for gpu in node.gpus:
-            if not is_user_on_gpu(gpu, user_names):
+            if not is_user_on_gpu(gpu, users):
                 continue
 
             res = parse_gpu(gpu)
 
             if res.error:
-                gpu_record = "{}{}[{}]".format(res.res_char, res.use_char, gpu.id)
+                gpu_record = gray_if_out_of_date(
+                    "{}{}[{}]".format(res.res_char, res.use_char, gpu.id),
+                    gpu.update_time,
+                )
                 click.echo(
                     gray_if_out_of_date(
                         click.style(
@@ -62,7 +62,10 @@ def show_errors(nodes: List[Node], user_names: Set[str]):
                                 (" " * longest_name_length)
                                 + "       "
                                 + "{} {} {} {}".format(
-                                    proc.id, proc.command, proc.user, proc_res.err_msg
+                                    proc.id,
+                                    proc.command,
+                                    proc.user_name,
+                                    proc_res.err_msg,
                                 ),
                                 fg=proc_res.color,
                             ),
