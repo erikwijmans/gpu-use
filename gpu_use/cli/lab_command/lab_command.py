@@ -30,6 +30,7 @@ def _gpu_usage(ent: Union[Lab, User]):
 )
 @click.option(
     "--overcap/--no-overcap",
+    "-o/-noc",
     default=True,
     show_default=True,
     help="Whether or not to include the overcap lab/account",
@@ -55,11 +56,6 @@ def gpu_use_lab_command(lab, overcap):
         session.query(Lab)
         .order_by(Lab.name)
         .filter(Lab.name.in_([lab.name for lab in labs]))
-        .options(
-            sa.orm.joinedload(Lab.users),
-            sa.orm.joinedload(Lab.slurm_jobs),
-            sa.orm.joinedload(Lab.gpus),
-        )
         .all()
     )
 
@@ -84,7 +80,10 @@ def gpu_use_lab_command(lab, overcap):
     click.echo("  |")
     click.echo(ROW_BREAK)
 
-    for lab in labs:
+    for lab in sorted(labs, key=_gpu_usage, reverse=True):
+        if _cpu_usage(lab) == 0 and _gpu_usage(lab) == 0:
+            continue
+
         click.echo("|", nl=False)
         click.secho(
             "{:>{width}}".format(lab.name, width=user_width), nl=False, bold=True
@@ -99,6 +98,8 @@ def gpu_use_lab_command(lab, overcap):
         #  click.echo(ROW_BREAK)
 
         for user in sorted(lab.users, key=_gpu_usage, reverse=True):
+            if _cpu_usage(user) == 0 and _gpu_usage(user) == 0:
+                continue
             click.echo("|{:>{width}} |".format(user.name, width=user_width), nl=False)
             click.echo("  ", nl=False)
             click.secho(

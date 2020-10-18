@@ -9,7 +9,7 @@ Base = declarative_base()
 class Lab(Base):
     __tablename__ = "labs"
 
-    name = sa.Column(sa.String(32), primary_key=True)
+    name = sa.Column(sa.String(32), primary_key=True, nullable=False)
 
     def __repr__(self):
         return "<Lab(name={})>".format(self.name)

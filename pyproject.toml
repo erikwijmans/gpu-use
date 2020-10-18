@@ -6,7 +6,7 @@ known_third_party = ["attr", "click", "click_default_group", "daemon", "sqlalche
 
 [tool.poetry]
 name = "gpu-use"
-version = "0.1.2"
+version = "0.1.3"
 description = ""
 authors = ["Erik Wijmans <etw@gatech.edu>"]
 

@@ -18,15 +18,17 @@ def gpu_use_cli():
 To see the help string for a given command, use `gpu-use <command> --help`
 
 Executes the `view` command by default
-    """
+"""
     pass
 
 
-@gpu_use_cli.command()
+@click.command()
 def version():
-    click.echo("Version: {}".format(__version__))
+    r"""Print the current version"""
+    click.echo(__version__)
 
 
+gpu_use_cli.add_command(version)
 gpu_use_cli.add_command(gpu_use_view_command)
 gpu_use_cli.add_command(gpu_use_lab_command)
 

@@ -34,6 +34,12 @@ NODE_GPU_ORDER = {
     },
 }
 
+gpu_command = "timeout 5m nvidia-smi -q -x"
+pid_command = "ps -o %p,:,%P,:,%a,:,%t --no-header -p "
+user_command = "ps -o pid,user:32 --no-header -p "
+listpids_command = "scontrol listpids"
+environ_file = "/proc/{}/environ"
+print_environ_file_command = "cat {} | xargs --null --max-args=1 echo"
 
 formatter = logging.Formatter(
     "[%(asctime)s] p%(process)s {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s",
@@ -46,6 +52,15 @@ ch.setFormatter(formatter)
 logger = logging.getLogger("gpu-used")
 logger.addHandler(ch)
 logger.setLevel(logging.INFO)
+
+
+@attr.s(auto_attribs=True)
+class ProcInfo:
+    pid: int
+    ppid: int
+    command: str
+    running_time: str
+    user_name: str
 
 
 @attr.s(auto_attribs=True)
@@ -110,14 +125,6 @@ def get_lineage(pid):
 
         ancestors.append(ppid)
     return ancestors
-
-
-gpu_command = "timeout 5m nvidia-smi -q -x"
-pid_command = "ps -o %p,:,%t,:,%a,:,%P --no-header -p "
-user_command = "ps -o pid,user:32 --no-header -p "
-listpids_command = "scontrol listpids"
-environ_file = "/proc/{}/environ"
-print_environ_file_command = "cat {} | xargs --null --max-args=1 echo"
 
 
 def is_gpu_state_same_and_all_in_use(node: Node, gpu2pid_info):
@@ -245,7 +252,7 @@ def do_node_monitor(session):
 
     # Get process info including who is running it
     pid_list = ",".join(
-        [str(y) for y in pids] + [str(info["pid"]) for info in slurm_pids]
+        set([str(y) for y in pids] + [str(info["pid"]) for info in slurm_pids])
     )
     pid2user = {}
     if len(pid_list) > 0:
@@ -286,7 +293,9 @@ def do_node_monitor(session):
         # and a process dying
         if pid in pid2user:
             all_pids.add(pid)
-            pid2user_info[pid] = [pid2user[pid]] + info[1:]
+            pid2user_info[pid] = ProcInfo(
+                pid, int(info[1]), info[2], info[3], pid2user[pid].strip()[0:32]
+            )
 
     jid2job_info = dict()
     gpu2job_info = dict()
@@ -297,9 +306,7 @@ def do_node_monitor(session):
             continue
 
         pid2job_info[pid] = jid
-        jid2job_info[jid] = JobInfo(
-            jid=jid, user_name=pid2user_info[pid][0].strip()[0:32]
-        )
+        jid2job_info[jid] = JobInfo(jid=jid, user_name=pid2user_info[pid].user_name)
 
         if osp.exists(environ_file.format(pid)):
             p_environ = (
@@ -334,6 +341,7 @@ def do_node_monitor(session):
     for job_info in gpu2job_info.values():
         user_name = job_info.user_name
         if user_name not in existing_users:
+            logger.info("Adding user {}".format(user_name))
             user = User(name=user_name)
             session.add(user)
 
@@ -342,6 +350,7 @@ def do_node_monitor(session):
             lab = session.query(Lab).filter_by(name=lab_name).first()
             if lab is None:
                 lab = Lab(name=lab_name)
+                logger.info("Adding lab {}".format(lab_name))
                 session.add(lab)
 
             user.lab = lab
@@ -427,11 +436,12 @@ def do_node_monitor(session):
             else:
                 slurm_job = None
 
-            cmnd = pid2user_info[pid][2][0:128]
+            cmnd = pid2user_info[pid].command[0:128]
 
-            user_name = pid2user_info[pid][0].strip()[0:32]
+            user_name = pid2user_info[pid].user_name
 
             if user_name not in existing_users:
+                logger.info("Adding user {}".format(user_name))
                 user = User(name=user_name)
                 session.add(user)
 
@@ -440,6 +450,7 @@ def do_node_monitor(session):
                 lab = session.query(Lab).filter_by(name=lab_name).first()
                 if lab is None:
                     lab = Lab(name=lab_name)
+                    logger.info("Adding lab {}".format(lab_name))
                     session.add(lab)
 
                 user.lab = lab
@@ -456,7 +467,8 @@ def do_node_monitor(session):
     for proc in (
         session.query(GPUProcess)
         .filter(
-            (GPUProcess.node_name == hostname) & sa.not_(GPUProcess.id.in_(all_pids))
+            (GPUProcess.node_name == hostname)
+            & sa.not_(GPUProcess.id.in_(list(all_pids)))
         )
         .all()
     ):
@@ -466,10 +478,35 @@ def do_node_monitor(session):
         session.query(SLURMJob)
         .filter(
             (SLURMJob.node_name == hostname)
-            & sa.not_(SLURMJob.job_id.in_(list(set(pid2job_info.values()))))
+            & sa.not_(SLURMJob.job_id.in_(list(jid2job_info.keys())))
         )
         .all()
     ):
         session.delete(job)
+
+    for user in (
+        session.query(User)
+        .filter(
+            User.nodes.any(Node.name == hostname)
+            & sa.not_(
+                User.slurm_jobs.any(SLURMJob.job_id.in_(list(jid2job_info.keys())))
+            )
+        )
+        .all()
+    ):
+        logger.info("Removing user {} from node {}".format(user.name, hostname))
+        user.nodes.remove(node)
+
+    for user in (
+        session.query(User)
+        .filter(sa.not_(User.nodes.any() | User.slurm_jobs.any()))
+        .all()
+    ):
+        logger.info("Deleting user {}".format(user.name))
+        session.delete(user)
+
+    for lab in session.query(Lab).filter(sa.not_(Lab.users.any())).all():
+        logger.info("Deleting lab {}".format(lab.name))
+        session.delete(lab)
 
     session.commit()
