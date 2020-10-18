@@ -16,25 +16,26 @@ NODE_NAME_WITH_TIME = "{}\t\tUpdated: {}"
 def show_regular(nodes: List[Node], users: List[User], display_time, display_load):
     longest_name_length = max(len(node.name) for node in nodes)
     for node in nodes:
-        name_str = click.style(
-            "{:{width}}".format(node.name, width=longest_name_length), bold=True
-        )
-        name_str = click.style(
-            "-------------------------------------\t"
-            + name_str
-            + "\t-------------------------------------",
-            fg="bright_white",
-        )
-
+        name_str = click.style(node.name, bold=True)
         if display_load:
             name_str = "{}\tLoad: {}".format(name_str, node.load)
-
         if display_time:
             name_str = NODE_NAME_WITH_TIME.format(
                 name_str, node.update_time.strftime("%Y-%m-%d %H:%M:%S")
             )
 
-        click.echo(gray_if_out_of_date(name_str, node.update_time), color=True)
+        click.echo(
+            gray_if_out_of_date(
+                click.style(
+                    "-------------------------------------------------------------------\n"
+                    + name_str
+                    + "\n-------------------------------------------------------------------",
+                    fg="bright_white",
+                ),
+                node.update_time,
+            ),
+            color=True,
+        )
 
         for gpu in node.gpus:
             if not is_user_on_gpu(gpu, users):

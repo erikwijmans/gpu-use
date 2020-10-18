@@ -1,6 +1,7 @@
 import click
 import click_default_group
 
+from gpu_use import __version__
 from gpu_use.cli.lab_command import gpu_use_lab_command
 from gpu_use.cli.view_command import gpu_use_view_command
 
@@ -19,6 +20,11 @@ To see the help string for a given command, use `gpu-use <command> --help`
 Executes the `view` command by default
     """
     pass
+
+
+@gpu_use_cli.command()
+def version():
+    click.echo("Version: {}".format(__version__))
 
 
 gpu_use_cli.add_command(gpu_use_view_command)

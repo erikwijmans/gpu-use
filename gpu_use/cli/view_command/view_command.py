@@ -40,7 +40,11 @@ from gpu_use.db.session import SessionMaker
     help="Specify a specific lab -- regex enabled",
 )
 @click.option(
-    "-d", "--dense", help="Use dense output format", default=False, is_flag=True
+    "-d/-nd",
+    "--dense/--no-dense",
+    help="Use dense output format",
+    default=True,
+    is_flag=True,
 )
 @click.option(
     "-e",
@@ -84,8 +88,8 @@ Notes:
     - When using gpu-use with `watch`, add `--color` for the output to be displayed
 correctly, i.e. use `watch --color gpu-use -d`.
     """
-    if only_errors and dense:
-        raise click.BadArgumentUsage("--dense and --errors are mutually exclusive")
+    if dense and only_errors:
+        dense = False
 
     node_re = re.compile(node) if node is not None else None
     user_re = re.compile(user) if user is not None else None
@@ -145,6 +149,8 @@ correctly, i.e. use `watch --color gpu-use -d`.
         click.echo(
             "Terminal does not support unicode, do `export LANG=en_US.UTF-8` for a better experience (may also need to start tmux with `-u`)"
         )
+
+    nodes = sorted(nodes, key=lambda n: len(n.gpus))
 
     if only_errors:
         show_errors(nodes, users)
