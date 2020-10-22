@@ -365,7 +365,11 @@ def do_node_monitor(session):
         user = existing_users[user_name]
 
         job_info.user = user
-        job_info.lab = _get_lab(job_info.lab_name)
+        job_info.lab = (
+            existing_jobs[job_info.jid].lab
+            if job_info.jid in existing_jobs
+            else _get_lab(job_info.lab_name)
+        )
 
         if user not in node.users:
             node.users.append(user)
