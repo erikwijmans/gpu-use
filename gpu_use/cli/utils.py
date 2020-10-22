@@ -19,6 +19,9 @@ def is_valid_use(gpu: GPU) -> bool:
     return all(
         (proc.slurm_job is not None and proc.slurm_job == gpu.slurm_job)
         for proc in gpu.processes
+    ) or all(
+        (gpu.slurm_job is not None and proc.user == gpu.slurm_job.user)
+        for proc in gpu.processes
     )
 
 

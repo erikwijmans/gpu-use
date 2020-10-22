@@ -225,9 +225,9 @@ def do_node_monitor(session):
     node.update_time = datetime.datetime.now()
     session.commit()
 
-    if is_gpu_state_same_and_all_in_use(node, gpu2pid_info):
-        logger.info("State same, exiting")
-        return
+    #  if is_gpu_state_same_and_all_in_use(node, gpu2pid_info):
+    #  logger.info("State same, exiting")
+    #  return
 
     logger.info("Querying slurm PIDs")
     # Get jobid to pid mappings
@@ -338,6 +338,19 @@ def do_node_monitor(session):
             all_pids.remove(pid)
 
     existing_users = {user.name: user for user in session.query(User).all()}
+    existing_labs = {lab.name: lab for lab in session.query(Lab).all()}
+    # Jobs can migrate between nodes, so we need to query all jobs!
+    existing_jobs = {job.job_id: job for job in session.query(SLURMJob).all()}
+
+    def _get_lab(lab_name):
+        if lab_name not in existing_labs:
+            lab = Lab(name=lab_name)
+            logger.info("Adding lab {}".format(lab_name))
+            session.add(lab)
+            existing_labs[lab_name] = lab
+
+        return existing_labs[lab_name]
+
     for job_info in gpu2job_info.values():
         user_name = job_info.user_name
         if user_name not in existing_users:
@@ -345,21 +358,14 @@ def do_node_monitor(session):
             user = User(name=user_name)
             session.add(user)
 
-            lab_name = job_info.lab_name
-
-            lab = session.query(Lab).filter_by(name=lab_name).first()
-            if lab is None:
-                lab = Lab(name=lab_name)
-                logger.info("Adding lab {}".format(lab_name))
-                session.add(lab)
-
-            user.lab = lab
+            user.lab = _get_lab(_get_lab_name_from_user_name(user_name))
 
             existing_users[user_name] = user
 
         user = existing_users[user_name]
 
         job_info.user = user
+        job_info.lab = _get_lab(job_info.lab_name)
 
         if user not in node.users:
             node.users.append(user)
@@ -369,9 +375,6 @@ def do_node_monitor(session):
         for gpu in node.gpus
         for proc in gpu.processes
     }
-
-    # Jobs can migrate between nodes, so we need to query all jobs!
-    existing_jobs = {job.job_id: job for job in session.query(SLURMJob).all()}
 
     def _add_job(job_info: JobInfo):
         jid = job_info.jid
@@ -440,6 +443,9 @@ def do_node_monitor(session):
 
             user_name = pid2user_info[pid].user_name
 
+            if (proc.user is None and user_name == "root") or proc.user_name == "root":
+                user_name = gpu.user_name
+
             if user_name not in existing_users:
                 logger.info("Adding user {}".format(user_name))
                 user = User(name=user_name)
@@ -457,7 +463,13 @@ def do_node_monitor(session):
 
                 existing_users[user_name] = user
 
-            proc.user = existing_users[user_name]
+            user = existing_users[user_name]
+
+            if node not in user.nodes:
+                user.nodes.append(node)
+
+            proc.user = user
+            proc.lab = user.lab
             proc.command = cmnd
             proc.slurm_job = slurm_job
 
@@ -472,6 +484,7 @@ def do_node_monitor(session):
         )
         .all()
     ):
+        logger.info("Removing process {} from node {}".format(proc.id, hostname))
         session.delete(proc)
 
     for job in (
@@ -482,6 +495,7 @@ def do_node_monitor(session):
         )
         .all()
     ):
+        logger.info("Removing job {} from node {}".format(job.job_id, hostname))
         session.delete(job)
 
     for user in (
@@ -490,6 +504,7 @@ def do_node_monitor(session):
             User.nodes.any(Node.name == hostname)
             & sa.not_(
                 User.slurm_jobs.any(SLURMJob.job_id.in_(list(jid2job_info.keys())))
+                | User.processes.any(GPUProcess.id.in_(list(all_pids)))
             )
         )
         .all()
@@ -499,7 +514,9 @@ def do_node_monitor(session):
 
     for user in (
         session.query(User)
-        .filter(sa.not_(User.nodes.any() | User.slurm_jobs.any()))
+        .filter(
+            sa.not_(User.nodes.any() | User.slurm_jobs.any() | User.processes.any())
+        )
         .all()
     ):
         logger.info("Deleting user {}".format(user.name))
