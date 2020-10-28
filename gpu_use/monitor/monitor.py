@@ -414,10 +414,12 @@ def do_node_monitor(session):
             job_info = gpu2job_info[gpu_id]
             gpu.slurm_job = _add_job(job_info)
             gpu.user = job_info.user
+            gpu.user_name = job_info.user.name
             gpu.lab = job_info.lab
         else:
             gpu.slurm_job = None
             gpu.user = None
+            gpu.user_name = None
             gpu.lab = None
 
         for pid in gpu2pid_info[gpu_id]:
@@ -456,7 +458,11 @@ def do_node_monitor(session):
             # The first time we see a root user, it is likely it is docker
             # and running on the correct GPU, so just assign that
             # We then keep that username till the end of time
-            if proc.user_name is None and user_name == "root":
+            if (
+                proc.user_name is None
+                and user_name == "root"
+                and gpu.user_name is not None
+            ):
                 user_name = gpu.user_name
             elif proc.user_name is not None and user_name == "root":
                 user_name = proc.user_name
