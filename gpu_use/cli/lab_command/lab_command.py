@@ -141,6 +141,7 @@ def gpu_use_lab_command(lab, overcap):
         for user in sorted(lab.users, key=_gpu_usage, reverse=True):
             if _cpu_usage(user) == 0 and _gpu_usage(user) == 0:
                 continue
+
             click.echo("|{:>{width}} |".format(user.name, width=user_width), nl=False)
             click.echo("  ", nl=False)
             click.secho(

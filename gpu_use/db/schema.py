@@ -100,7 +100,9 @@ class GPU(Base):
     update_time = sa.Column(sa.DateTime())
 
     def __repr__(self):
-        return "<GPU(gpu_id={}, node={})>".format(self.id, self.node_name)
+        return "<GPU(gpu_id={}, node={}, lab={})>".format(
+            self.id, self.node_name, self.lab_name
+        )
 
 
 class GPUProcess(Base):

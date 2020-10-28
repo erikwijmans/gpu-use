@@ -43,7 +43,7 @@ from gpu_use.db.session import SessionMaker
     "-d/-nd",
     "--dense/--no-dense",
     help="Use dense output format",
-    default=True,
+    default=None,
     is_flag=True,
 )
 @click.option(
@@ -151,6 +151,10 @@ correctly, i.e. use `watch --color gpu-use -d`.
         )
 
     nodes = sorted(nodes, key=lambda n: len(n.gpus))
+
+    if not only_errors and dense is None:
+        if len(nodes) > 4:
+            dense = True
 
     if only_errors:
         show_errors(nodes, users)

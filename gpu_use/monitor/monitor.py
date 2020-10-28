@@ -149,7 +149,12 @@ def is_gpu_state_same_and_all_in_use(node: Node, gpu2pid_info):
 def node_monitor():
     logger.info("Monitor Start")
 
-    session = SessionMaker()
+    try:
+        session = SessionMaker()
+    except sa.exc.OperationalError as e:
+        logger.info("Got {} while trying to make DB session, exiting".format(e))
+        return
+
     try:
         do_node_monitor(session)
     except UnicodeDecodeError as e:
@@ -372,6 +377,7 @@ def do_node_monitor(session):
         )
 
         if user not in node.users:
+            logger.info("Adding user {} to node {}".format(user.name, node.name))
             node.users.append(user)
 
     existing_processes = {
@@ -408,7 +414,7 @@ def do_node_monitor(session):
             job_info = gpu2job_info[gpu_id]
             gpu.slurm_job = _add_job(job_info)
             gpu.user = job_info.user
-            gpu.lab = job_info.user.lab
+            gpu.lab = job_info.lab
         else:
             gpu.slurm_job = None
             gpu.user = None
@@ -447,8 +453,13 @@ def do_node_monitor(session):
 
             user_name = pid2user_info[pid].user_name
 
-            if (proc.user is None and user_name == "root") or proc.user_name == "root":
+            # The first time we see a root user, it is likely it is docker
+            # and running on the correct GPU, so just assign that
+            # We then keep that username till the end of time
+            if proc.user_name is None and user_name == "root":
                 user_name = gpu.user_name
+            elif proc.user_name is not None and user_name == "root":
+                user_name = proc.user_name
 
             if user_name not in existing_users:
                 logger.info("Adding user {}".format(user_name))
@@ -470,9 +481,11 @@ def do_node_monitor(session):
             user = existing_users[user_name]
 
             if node not in user.nodes:
+                logger.info("Adding user {} to node {}".format(user.name, node.name))
                 user.nodes.append(node)
 
             proc.user = user
+            proc.user_name = user_name
             proc.lab = user.lab
             proc.command = cmnd
             proc.slurm_job = slurm_job
