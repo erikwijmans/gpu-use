@@ -26,7 +26,10 @@ def is_valid_use(gpu: GPU) -> bool:
 
 
 def is_user_on_gpu(gpu: GPU, users: Optional[List[User]]) -> bool:
-    return users is None or gpu.user in users
+    gpu_proc_users = {proc.user for proc in gpu.processes}
+    return users is None or (
+        gpu.user in users or any(user in gpu_proc_users for user in users)
+    )
 
 
 def filter_labs(session, lab) -> List[Lab]:
