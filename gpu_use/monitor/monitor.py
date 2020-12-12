@@ -292,6 +292,17 @@ def do_node_monitor(session):
                 continue
 
             pid, user = line.split(" ")
+            try:
+                int(user)
+                logger.info(
+                    "Got integer only user ID {}, exiting to try again later".format(
+                        user
+                    )
+                )
+                return
+            except ValueError:
+                pass
+
             pid2user[int(pid)] = user
     else:
         ps_info = []
