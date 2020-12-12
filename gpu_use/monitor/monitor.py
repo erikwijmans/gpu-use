@@ -82,18 +82,21 @@ class JobInfo:
 
     @property
     def cpus(self):
-        cpus = CPU_REGEX.search(self.info_str).strip()
+        cpus = CPU_REGEX.search(self.info_str)
         return int(cpus.group("cpus"))
 
     @property
     def lab_name(self):
-        lab_name = ACCOUNT_REGEX.search(self.info_str).strip()
-        return lab_name.group("account")
+        lab_name = ACCOUNT_REGEX.search(self.info_str)
+        return lab_name.group("account").strip()
+
+    @property
+    def partition(self):
+        return PARTITION_REGEX.search(self.info_str).group("part").strip()
 
     @property
     def is_debug(self):
-        partition = PARTITION_REGEX.search(self.info_str).group("part").strip()
-        return partition.lower() == "debug"
+        return self.partition.lower() == "debug"
 
     @property
     def is_overcap(self):
