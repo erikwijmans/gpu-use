@@ -16,9 +16,9 @@ import sqlalchemy as sa
 from gpu_use.db.schema import GPU, GPUProcess, Lab, Node, SLURMJob, User
 from gpu_use.db.session import SessionMaker
 
-ACCOUNT_REGEX = re.compile("Account=(?P<account>\w.*?)\s")
-PARTITION_REGEX = re.compile("Partition=(?P<part>\w.*?)\s")
-CPU_REGEX = re.compile("cpu=(?P<cpus>\d+)")
+ACCOUNT_REGEX = re.compile(r"Account=(?P<account>\w.*?)\s")
+PARTITION_REGEX = re.compile(r"Partition=(?P<part>\w.*?)\s")
+CPU_REGEX = re.compile(r"cpu=(?P<cpus>\d+)")
 
 JOB_INFO = "scontrol show job {}"
 
@@ -82,18 +82,22 @@ class JobInfo:
 
     @property
     def cpus(self):
-        cpus = CPU_REGEX.search(self.info_str)
-        return cpus.group("cpus")
+        cpus = CPU_REGEX.search(self.info_str).strip()
+        return int(cpus.group("cpus"))
 
     @property
     def lab_name(self):
-        lab_name = ACCOUNT_REGEX.search(self.info_str)
+        lab_name = ACCOUNT_REGEX.search(self.info_str).strip()
         return lab_name.group("account")
 
     @property
     def is_debug(self):
-        partition = PARTITION_REGEX.search(self.info_str).group("part")
+        partition = PARTITION_REGEX.search(self.info_str).group("part").strip()
         return partition.lower() == "debug"
+
+    @property
+    def is_overcap(self):
+        return self.lab_name == "overcap"
 
 
 def _get_lab_name_from_user_name(user_name: str) -> str:
@@ -370,11 +374,7 @@ def do_node_monitor(session):
         user = existing_users[user_name]
 
         job_info.user = user
-        job_info.lab = (
-            existing_jobs[job_info.jid].lab
-            if job_info.jid in existing_jobs
-            else _get_lab(job_info.lab_name)
-        )
+        job_info.lab = user.lab
 
         if user not in node.users:
             logger.info("Adding user {} to node {}".format(user.name, node.name))
@@ -391,7 +391,11 @@ def do_node_monitor(session):
         user = job_info.user
         if jid not in existing_jobs:
             job = SLURMJob(
-                job_id=jid, node=node, user=user, is_debug_job=job_info.is_debug
+                job_id=jid,
+                node=node,
+                user=user,
+                is_debug_job=job_info.is_debug,
+                is_overcap_job=job_info.is_overcap,
             )
             job.cpus = job_info.cpus
 

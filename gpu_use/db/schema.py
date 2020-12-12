@@ -65,6 +65,7 @@ class SLURMJob(Base):
 
     job_id = sa.Column(sa.Integer, primary_key=True)
     is_debug_job = sa.Column(sa.Boolean)
+    is_overcap_job = sa.Column(sa.Boolean)
     cpus = sa.Column(sa.Integer)
 
     node = sa.orm.relationship("Node", back_populates="slurm_jobs", lazy="select")
