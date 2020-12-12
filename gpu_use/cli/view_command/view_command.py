@@ -115,6 +115,7 @@ correctly, i.e. use `watch --color gpu-use -d`.
 
         user_names = list(set(user.name for lab in labs for user in lab.users))
         users = session.query(User).filter(User.name.in_(user_names))
+        nodes = nodes.filter(Node.users.any(User.name.in_(user_names)))
 
     if user_re is not None:
         user_names = [
