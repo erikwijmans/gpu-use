@@ -219,10 +219,14 @@ def do_node_monitor(session):
     for gpu in gpu_xml.findall("gpu"):
         gpu_id = int(gpu.find("minor_number").text)
         gpu_id = gpu_order_mapping[gpu_id]
-        gpu2pid_info[gpu_id] = [
-            int(y.find("pid").text)
-            for y in gpu.find("processes").findall("process_info")
-        ]
+        procs = []
+        for p in gpu.find("processes").findall("process_info"):
+            if p.find("used_memory").text == "0 MiB":
+                continue
+
+            procs.append(int(p.find("pid").text))
+
+        gpu2pid_info[gpu_id] = procs
         pids.extend(gpu2pid_info[gpu_id])
 
         if gpu_id not in (gpu.id for gpu in node.gpus):
