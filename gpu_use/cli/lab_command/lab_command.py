@@ -6,13 +6,22 @@ from typing import List, Set, Union
 import click
 import sqlalchemy as sa
 
-from gpu_use.cli.utils import filter_labs, is_valid_use, supports_unicode
+from gpu_use.cli.utils import (
+    filter_labs,
+    is_out_of_date,
+    is_valid_use,
+    supports_unicode,
+)
 from gpu_use.db.schema import GPU, GPUProcess, Lab, Node, SLURMJob, User
 from gpu_use.db.session import SessionMaker
 
 
 def _cpu_usage(ent: Union[Lab, User], overcap: bool):
-    return sum(job.cpus for job in ent.slurm_jobs if overcap or not job.is_overcap_job)
+    return sum(
+        job.cpus if not is_out_of_date(job.node.update_time) else 0
+        for job in ent.slurm_jobs
+        if overcap or not job.is_overcap_job
+    )
 
 
 def _gpu_is_overcap(gpu: GPU) -> bool:
@@ -20,11 +29,19 @@ def _gpu_is_overcap(gpu: GPU) -> bool:
 
 
 def _gpu_usage(ent: Union[Lab, User], overcap: bool):
-    return sum(1 if overcap or not _gpu_is_overcap(gpu) else 0 for gpu in ent.gpus)
+    return sum(
+        1
+        if (overcap or not _gpu_is_overcap(gpu)) and not is_out_of_date(gpu.update_time)
+        else 0
+        for gpu in ent.gpus
+    )
 
 
 def _invalid_gpu_usage(ent: Union[Lab, User], overcap: bool):
-    return sum(0 if is_valid_use(gpu) else 1 for gpu in ent.gpus)
+    return sum(
+        0 if is_valid_use(gpu) or is_out_of_date(gpu.update_time) else 1
+        for gpu in ent.gpus
+    )
 
 
 def _idle_gpu_usage(ent: Union[Lab, User], overcap: bool):
@@ -37,7 +54,10 @@ def _idle_gpu_usage(ent: Union[Lab, User], overcap: bool):
 
         return len(gpu.processes) == 0 and not gpu.slurm_job.is_debug_job
 
-    return sum(1 if _is_idle(gpu) else 0 for gpu in ent.gpus)
+    return sum(
+        1 if _is_idle(gpu) and not is_out_of_date(gpu.update_time) else 0
+        for gpu in ent.gpus
+    )
 
 
 def _valid_gpu_usage(ent: Union[Lab, User], overcap: bool):

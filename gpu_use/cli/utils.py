@@ -41,12 +41,18 @@ def filter_labs(session, lab) -> List[Lab]:
     return labs
 
 
+def is_out_of_date(
+    update_time: datetime.datetime, max_lag_time=datetime.timedelta(minutes=10)
+):
+    return (datetime.datetime.now() - update_time) >= max_lag_time
+
+
 def gray_if_out_of_date(
     string: str,
     update_time: datetime.datetime,
     max_lag_time=datetime.timedelta(minutes=10),
 ):
-    if (datetime.datetime.now() - update_time) < max_lag_time:
+    if not is_out_of_date(update_time, max_lag_time):
         return string
 
     stripped_string = io.StringIO()

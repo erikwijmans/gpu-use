@@ -32,6 +32,7 @@ NODE_GPU_ORDER = {
     "vicki": {
         smi_id: cuda_id for cuda_id, smi_id in enumerate([0, 2, 3, 5, 6, 7, 1, 4])
     },
+    "brainiac": {smi_id: cuda_id for cuda_id, smi_id in enumerate([1, 0, 3, 2])},
 }
 
 gpu_command = "timeout 5m nvidia-smi -q -x"
@@ -210,7 +211,7 @@ def do_node_monitor(session):
     smi_out = subprocess.check_output(shlex.split(gpu_command)).decode("utf-8")
     logger.info("Done query nvidia-smi")
 
-    # ripl-s1 has a weird GPU order according to CUDA, so
+    # some nodes have a weird GPU order according to CUDA, so
     # we need to re-order nvidia-smi
     gpu_order_mapping = NODE_GPU_ORDER.get(
         hostname, {smi_id: cuda_id for cuda_id, smi_id in enumerate(range(8))}
@@ -326,6 +327,8 @@ def do_node_monitor(session):
 
     jid2job_info = dict()
     gpu2job_info = dict()
+    slurm_pids.sort(key=lambda v: v["pid"])
+
     for info in slurm_pids:
         pid = info["pid"]
         jid = info["jid"]
@@ -460,7 +463,7 @@ def do_node_monitor(session):
                 new_processes.append(proc)
 
             job_ids = list(
-                set([pid2job_info[i] for i in ancestors if i in pid2job_info.keys()])
+                {pid2job_info[i] for i in ancestors if i in pid2job_info.keys()}
             )
             if len(job_ids) > 1:
                 raise RuntimeError(
@@ -477,16 +480,18 @@ def do_node_monitor(session):
 
             user_name = pid2user_info[pid].user_name
 
-            # The first time we see a root user, it is likely it is docker
+            # The first time we see a DOCKER_USERS user,
+            # it is likely it is docker
             # and running on the correct GPU, so just assign that
             # We then keep that username till the end of time
+            DOCKER_USERS = {"root", "coc-admin", "docker", "dockerd"}
             if (
                 proc.user_name is None
-                and user_name == "root"
+                and user_name in DOCKER_USERS
                 and gpu.user_name is not None
             ):
                 user_name = gpu.user_name
-            elif proc.user_name is not None and user_name == "root":
+            elif proc.user_name is not None and user_name in DOCKER_USERS:
                 user_name = proc.user_name
 
             if user_name not in existing_users:
